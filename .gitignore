@@ -1,0 +1,38 @@
+# Dependencies and build output
+node_modules/
+dist/
+.vite/
+coverage/
+
+# Private product material
+docs/
+specs/
+design/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.mobileprovision
+credentials.json
+secrets.json
+service-account*.json
+
+# Local configuration and logs
+*.local
+*.log
+.DS_Store
+.idea/
+.vscode/
+
+# Package-manager noise
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
