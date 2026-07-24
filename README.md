@@ -32,4 +32,4 @@ npm run build
 
 ## License
 
-开源许可证尚未确定。在许可证发布前，代码仅供查看，请勿复制、修改或再分发。
+本项目采用 [Apache License 2.0](LICENSE) 开源。
