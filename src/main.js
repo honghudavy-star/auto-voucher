@@ -53,7 +53,7 @@ document.querySelector("#app").innerHTML = `
       <div class="aurora aurora-two"></div>
       <div class="hero-copy">
         <div class="eyebrow reveal"><span></span> iAgent Finance · 首个产品</div>
-        <h1 id="hero-title" class="reveal">让财务工作<br />回到<span>清晰与判断。</span></h1>
+        <h1 id="hero-title" class="reveal">财务凭证自动化</h1>
         <p class="hero-lead reveal">
           Auto Voucher 在企业本地读取业务资料、匹配单据，生成可审核的凭证草稿。
           重复工作交给流程，不确定的事项留给财务人员。

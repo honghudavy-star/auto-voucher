@@ -311,6 +311,7 @@ svg {
   font-weight: 520;
   line-height: 1.04;
   letter-spacing: -0.075em;
+  white-space: nowrap;
 }
 
 .hero h1 span,
@@ -1681,7 +1682,7 @@ svg {
   }
 
   .hero h1 {
-    font-size: clamp(47px, 15vw, 70px);
+    font-size: clamp(42px, 12vw, 58px);
     letter-spacing: -0.07em;
   }
 
