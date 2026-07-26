@@ -503,7 +503,7 @@ func (l *Launcher) downloadPackage(ctx context.Context, pkg Package, destination
 	if offset > 0 {
 		request.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
-	response, err := l.client.Do(request)
+	response, err := l.packageHTTPClient().Do(request)
 	if err != nil {
 		return err
 	}
@@ -548,6 +548,18 @@ func (l *Launcher) downloadPackage(ctx context.Context, pkg Package, destination
 		return err
 	}
 	return verifyPackage(destination, pkg)
+}
+
+func (l *Launcher) packageHTTPClient() *http.Client {
+	if l.client == nil {
+		return &http.Client{}
+	}
+	client := *l.client
+	// The metadata client is deliberately bounded so update checks fail fast.
+	// A package transfer can be hundreds of megabytes and must instead rely on
+	// its request context, while retaining redirect and transport policies.
+	client.Timeout = 0
+	return &client
 }
 
 func verifyPackage(path string, pkg Package) error {
@@ -1174,9 +1186,21 @@ func (l *Launcher) checkForUpdate(ctx context.Context) {
 		l.downloadMu.Lock()
 		defer l.downloadMu.Unlock()
 		if err := l.install(manifest); err != nil {
-			l.log("WARNING", "UPDATE_BACKGROUND_DOWNLOAD_FAILED", err.Error(), nil)
+			l.recordBackgroundDownloadFailure(err)
 		}
 	}
+}
+
+func (l *Launcher) recordBackgroundDownloadFailure(err error) {
+	const code = "UPDATE_BACKGROUND_DOWNLOAD_FAILED"
+	l.mu.Lock()
+	l.state.Status = "error"
+	l.state.Message = "更新下载失败，可重新检查后继续下载：" + err.Error()
+	l.state.LastSupportCode = supportCode(code)
+	_ = l.save()
+	support := l.state.LastSupportCode
+	l.mu.Unlock()
+	l.log("WARNING", code, err.Error(), map[string]any{"supportCode": support})
 }
 
 func (l *Launcher) postponed() bool {

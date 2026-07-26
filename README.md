@@ -89,7 +89,7 @@ docs/         架构、诊断和发布文档
 - [系统架构](docs/architecture.md)
 - [诊断日志与技术支持](docs/诊断日志与技术支持.md)
 - [Windows 发版清单](docs/Windows发版清单.md)
-- [v0.2.1 发布说明](docs/v0.2.1发布说明.md)
+- [v0.2.2 发布说明](docs/v0.2.2发布说明.md)
 - [v0.2.0 发布说明](docs/v0.2.0发布说明.md)
 - [长视频讲解与宣传脚本](docs/Auto-Voucher长视频讲解与宣传脚本.md)
 - [产品需求说明](specs/auto-voucher-prd.spec.md)
