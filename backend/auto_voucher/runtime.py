@@ -462,7 +462,7 @@ class EnvironmentService:
                 self.secret_store.set(connector_id, secret_name, expected)
                 available = self.secret_store.get(connector_id, secret_name) == expected
                 actual = "临时密钥写入、读取和删除成功" if available else "临时密钥读取结果不一致"
-        except (RuntimeError, OSError, ValueError) as exc:
+        except Exception as exc:
             available = False
             actual = str(exc)
         finally:
