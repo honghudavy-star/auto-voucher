@@ -37,6 +37,11 @@ class CleanupFailingSecretStore(FakeSecretStore):
         raise Exception("Windows 登录会话已终止")
 
 
+class SetFailingSecretStore(FakeSecretStore):
+    def set(self, connector_id, secret_name, value):
+        raise Exception("Windows 登录会话不存在")
+
+
 class RuntimeTests(unittest.TestCase):
     def make_service(self, directory, *, secrets=True):
         root = Path(directory)
@@ -108,6 +113,16 @@ class RuntimeTests(unittest.TestCase):
             service.secret_store = CleanupFailingSecretStore(available=False)
             result = service._keyring_check()
             self.assertEqual(result["status"], "warning")
+            self.assertFalse(result["blocking"])
+            self.assertTrue(result["productionBlocking"])
+
+    def test_credential_manager_backend_exception_stays_degraded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.make_service(directory)
+            service.secret_store = SetFailingSecretStore(available=True)
+            result = service._keyring_check()
+            self.assertEqual(result["status"], "warning")
+            self.assertEqual(result["actual"], "Windows 登录会话不存在")
             self.assertFalse(result["blocking"])
             self.assertTrue(result["productionBlocking"])
 
