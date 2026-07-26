@@ -18,7 +18,7 @@ on:
         description: Minimum allowed launcher version
         default: "0.2.0"
       publish:
-        description: Publish signed artifacts to configured Cloudflare R2
+        description: Publish verified unsigned artifacts to configured Cloudflare R2
         type: boolean
         default: false
   push:
@@ -32,16 +32,20 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
+    environment:
+      name: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)) && 'release' || 'candidate' }}
     permissions:
       contents: read
     env:
       AUTO_VOUCHER_RELEASE_PRIVATE_KEY: ${{ secrets.AUTO_VOUCHER_RELEASE_PRIVATE_KEY }}
       AUTO_VOUCHER_CORE_BASE_URL: ${{ vars.AUTO_VOUCHER_CORE_BASE_URL }}
-      WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
-      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: "true"
       AUTO_VOUCHER_R2_BUCKET: ${{ vars.AUTO_VOUCHER_R2_BUCKET }}
+      AUTO_VOUCHER_R2_PREFIX: ${{ vars.AUTO_VOUCHER_R2_PREFIX }}
       AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL: ${{ vars.AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -82,7 +86,6 @@ jobs:
           go vet ./...
       - name: Lint GitHub Actions workflow
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/windows-installer.yml
-
       - name: Resolve release metadata
         id: release
         shell: pwsh
@@ -128,9 +131,14 @@ jobs:
         run: |
           if ("${{ steps.signing.outputs.ephemeral }}" -eq "true") { throw "Formal releases require AUTO_VOUCHER_RELEASE_PRIVATE_KEY" }
           if (-not $env:AUTO_VOUCHER_CORE_BASE_URL) { throw "Formal releases require AUTO_VOUCHER_CORE_BASE_URL" }
-          if (-not $env:WINDOWS_CERTIFICATE_BASE64 -or -not $env:WINDOWS_CERTIFICATE_PASSWORD) { throw "Formal releases require Authenticode certificate secrets" }
-          if (-not $env:CLOUDFLARE_API_TOKEN -or -not $env:CLOUDFLARE_ACCOUNT_ID) { throw "Formal releases require Cloudflare credentials" }
-          if (-not $env:AUTO_VOUCHER_R2_BUCKET -or -not $env:AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL) { throw "Formal releases require R2 bucket and public update URL" }
+          if (-not $env:CLOUDFLARE_ACCOUNT_ID -or -not $env:AWS_ACCESS_KEY_ID -or -not $env:AWS_SECRET_ACCESS_KEY) { throw "Formal releases require bucket-scoped R2 credentials" }
+          if (-not $env:AUTO_VOUCHER_R2_BUCKET -or -not $env:AUTO_VOUCHER_R2_PREFIX -or -not $env:AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL) { throw "Formal releases require R2 bucket, object prefix and public update URL" }
+          $prefix = $env:AUTO_VOUCHER_R2_PREFIX.Trim("/")
+          if ($prefix -notmatch "^[A-Za-z0-9][A-Za-z0-9._/-]*[A-Za-z0-9]$" -or $prefix -match "(^|/)\.\.(/|$)") {
+            throw "AUTO_VOUCHER_R2_PREFIX is not a safe object prefix"
+          }
+          $publicPath = ([uri]$env:AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL).AbsolutePath.Trim("/")
+          if ($publicPath -ne $prefix) { throw "Public update URL path must match AUTO_VOUCHER_R2_PREFIX" }
 
       - name: Build core without optional OCR
         run: uv run --frozen --group release pyinstaller --distpath dist-pyinstaller --workpath build-pyinstaller --noconfirm packaging/auto-voucher.spec
@@ -157,37 +165,6 @@ jobs:
         run: |
           $manifestUrl = if ($env:AUTO_VOUCHER_CORE_BASE_URL) { "$($env:AUTO_VOUCHER_CORE_BASE_URL.TrimEnd('/'))/${{ steps.release.outputs.channel }}/manifest.json" } else { "https://invalid.local/auto-voucher/${{ steps.release.outputs.channel }}/manifest.json" }
           go build -trimpath -ldflags "-s -w -H=windowsgui -X main.launcherVersion=${{ steps.release.outputs.version }} -X main.defaultManifestURL=$manifestUrl -X main.manifestPublicKey=${{ steps.signing.outputs.public_key }}" -o ..\release\AutoVoucherLauncher.exe .
-
-      - name: Restore Authenticode certificate
-        if: env.WINDOWS_CERTIFICATE_BASE64 != ''
-        id: certificate
-        shell: pwsh
-        run: |
-          $certificate = Join-Path $env:RUNNER_TEMP "auto-voucher-signing.pfx"
-          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
-          "path=$certificate" >> $env:GITHUB_OUTPUT
-
-      - name: Sign launcher and core components
-        if: env.WINDOWS_CERTIFICATE_BASE64 != ''
-        shell: pwsh
-        run: |
-          $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $signTool) { throw "signtool.exe not found" }
-          foreach ($file in @("release\AutoVoucherLauncher.exe", "dist-pyinstaller\AutoVoucherCore.exe", "dist-ocr\AutoVoucherOCR.exe", "dist-pdf\AutoVoucherPDF.exe")) {
-            & $signTool.FullName sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f "${{ steps.certificate.outputs.path }}" /p $env:WINDOWS_CERTIFICATE_PASSWORD $file
-            & $signTool.FullName verify /pa /v $file
-          }
-
-      - name: Repackage signed components
-        if: env.WINDOWS_CERTIFICATE_BASE64 != ''
-        shell: pwsh
-        run: |
-          Remove-Item "release\AutoVoucherCore-${{ steps.release.outputs.version }}-windows-x64.zip"
-          Remove-Item "release\AutoVoucherOCR-${{ steps.release.outputs.version }}-windows-x64.zip"
-          Remove-Item "release\AutoVoucherPDF-${{ steps.release.outputs.version }}-windows-x64.zip"
-          Compress-Archive -Path dist-pyinstaller\AutoVoucherCore.exe -DestinationPath "release\AutoVoucherCore-${{ steps.release.outputs.version }}-windows-x64.zip"
-          Compress-Archive -Path dist-ocr\AutoVoucherOCR.exe -DestinationPath "release\AutoVoucherOCR-${{ steps.release.outputs.version }}-windows-x64.zip"
-          Compress-Archive -Path dist-pdf\AutoVoucherPDF.exe -DestinationPath "release\AutoVoucherPDF-${{ steps.release.outputs.version }}-windows-x64.zip"
 
       - name: Generate signed version manifest
         working-directory: launcher
@@ -218,39 +195,34 @@ jobs:
           choco install innosetup --version=6.7.1 --no-progress -y
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=${{ steps.release.outputs.version }}" packaging\AutoVoucher.iss
 
-      - name: Sign bootstrap installer
-        if: env.WINDOWS_CERTIFICATE_BASE64 != ''
-        shell: pwsh
-        run: |
-          $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
-          Get-ChildItem release\AutoVoucher-Setup-*.exe | ForEach-Object {
-            & $signTool.FullName sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f "${{ steps.certificate.outputs.path }}" /p $env:WINDOWS_CERTIFICATE_PASSWORD $_.FullName
-            & $signTool.FullName verify /pa /v $_.FullName
-          }
-
-      - name: Publish signed update objects to Cloudflare R2
+      - name: Publish verified update objects to Cloudflare R2
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
         shell: pwsh
         run: |
-          if (-not $env:CLOUDFLARE_API_TOKEN -or -not $env:CLOUDFLARE_ACCOUNT_ID) { throw "R2 publish requires Cloudflare credentials" }
-          if (-not $env:AUTO_VOUCHER_R2_BUCKET -or -not $env:AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL) { throw "R2 publish requires bucket and public base URL" }
+          if (-not $env:CLOUDFLARE_ACCOUNT_ID -or -not $env:AWS_ACCESS_KEY_ID -or -not $env:AWS_SECRET_ACCESS_KEY) { throw "R2 publish requires bucket-scoped S3 credentials" }
+          if (-not $env:AUTO_VOUCHER_R2_BUCKET -or -not $env:AUTO_VOUCHER_R2_PREFIX -or -not $env:AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL) { throw "R2 publish requires bucket, object prefix and public base URL" }
           if ($env:AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL.TrimEnd('/') -ne $env:AUTO_VOUCHER_CORE_BASE_URL.TrimEnd('/')) { throw "Public readback URL must match the URL embedded in the signed manifest" }
+          aws --version
+          if ($LASTEXITCODE -ne 0) { throw "AWS CLI v2 is required on the release runner" }
+          $endpoint = "https://$env:CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com"
+          $prefix = $env:AUTO_VOUCHER_R2_PREFIX.Trim("/")
           $channel = "${{ steps.release.outputs.channel }}"
           $version = "${{ steps.release.outputs.version }}"
           $setup = (Get-ChildItem "release\AutoVoucher-Setup-$version-windows-x64.exe" | Select-Object -First 1).FullName
           foreach ($item in @(
-            @{ key="$channel/AutoVoucherCore-$version-windows-x64.zip"; file="release\AutoVoucherCore-$version-windows-x64.zip"; type="application/zip"; cache="public, max-age=31536000, immutable" },
-            @{ key="$channel/AutoVoucherOCR-$version-windows-x64.zip"; file="release\AutoVoucherOCR-$version-windows-x64.zip"; type="application/zip"; cache="public, max-age=31536000, immutable" },
-            @{ key="$channel/AutoVoucherPDF-$version-windows-x64.zip"; file="release\AutoVoucherPDF-$version-windows-x64.zip"; type="application/zip"; cache="public, max-age=31536000, immutable" },
-            @{ key="$channel/AutoVoucherLauncher-$version-windows-x64.exe"; file="release\AutoVoucherLauncher.exe"; type="application/vnd.microsoft.portable-executable"; cache="public, max-age=31536000, immutable" },
-            @{ key="$channel/AutoVoucher-Setup-$version-windows-x64.exe"; file=$setup; type="application/vnd.microsoft.portable-executable"; cache="public, max-age=31536000, immutable" },
-            @{ key="$channel/manifest.json.sig"; file="release\manifest.json.sig"; type="text/plain"; cache="no-store" }
+            @{ key="$prefix/$channel/AutoVoucherCore-$version-windows-x64.zip"; file="release\AutoVoucherCore-$version-windows-x64.zip"; type="application/zip"; cache="public, max-age=31536000, immutable" },
+            @{ key="$prefix/$channel/AutoVoucherOCR-$version-windows-x64.zip"; file="release\AutoVoucherOCR-$version-windows-x64.zip"; type="application/zip"; cache="public, max-age=31536000, immutable" },
+            @{ key="$prefix/$channel/AutoVoucherPDF-$version-windows-x64.zip"; file="release\AutoVoucherPDF-$version-windows-x64.zip"; type="application/zip"; cache="public, max-age=31536000, immutable" },
+            @{ key="$prefix/$channel/AutoVoucherLauncher-$version-windows-x64.exe"; file="release\AutoVoucherLauncher.exe"; type="application/vnd.microsoft.portable-executable"; cache="public, max-age=31536000, immutable" },
+            @{ key="$prefix/$channel/AutoVoucher-Setup-$version-windows-x64.exe"; file=$setup; type="application/vnd.microsoft.portable-executable"; cache="public, max-age=31536000, immutable" },
+            @{ key="$prefix/$channel/manifest.json.sig"; file="release\manifest.json.sig"; type="text/plain"; cache="no-store" }
           )) {
-            if ((Get-Item $item.file).Length -gt 315MB) { throw "$($item.file) exceeds Wrangler's 315 MB R2 upload limit; use the approved multipart release path" }
-            npx --yes wrangler@4.114.0 r2 object put "$env:AUTO_VOUCHER_R2_BUCKET/$($item.key)" --file "$($item.file)" --content-type "$($item.type)" --cache-control "$($item.cache)"
+            aws s3api put-object --no-cli-pager --endpoint-url $endpoint --bucket $env:AUTO_VOUCHER_R2_BUCKET --key $item.key --body $item.file --content-type $item.type --cache-control $item.cache
+            if ($LASTEXITCODE -ne 0) { throw "R2 upload failed for $($item.key)" }
           }
           # Publish the signed manifest last so clients never observe references to missing packages.
-          npx --yes wrangler@4.114.0 r2 object put "$env:AUTO_VOUCHER_R2_BUCKET/$channel/manifest.json" --file "release\manifest.json" --content-type "application/json" --cache-control "no-store"
+          aws s3api put-object --no-cli-pager --endpoint-url $endpoint --bucket $env:AUTO_VOUCHER_R2_BUCKET --key "$prefix/$channel/manifest.json" --body "release\manifest.json" --content-type "application/json" --cache-control "no-store"
+          if ($LASTEXITCODE -ne 0) { throw "R2 manifest upload failed" }
 
       - name: Read back published manifest and package metadata
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
@@ -281,10 +253,13 @@ jobs:
           $channel = "${{ steps.release.outputs.channel }}"
           $version = "${{ steps.release.outputs.version }}"
           $setup = "release\AutoVoucher-Setup-$version-windows-x64.exe"
-          $alias = "downloads/$channel/AutoVoucher-Setup-windows-x64.exe"
-          npx --yes wrangler@4.114.0 r2 object put "$env:AUTO_VOUCHER_R2_BUCKET/$alias" --file "$setup" --content-type "application/vnd.microsoft.portable-executable" --cache-control "no-store"
+          $prefix = $env:AUTO_VOUCHER_R2_PREFIX.Trim("/")
+          $alias = "$prefix/downloads/$channel/AutoVoucher-Setup-windows-x64.exe"
+          $endpoint = "https://$env:CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com"
+          aws s3api put-object --no-cli-pager --endpoint-url $endpoint --bucket $env:AUTO_VOUCHER_R2_BUCKET --key $alias --body $setup --content-type "application/vnd.microsoft.portable-executable" --cache-control "no-store"
+          if ($LASTEXITCODE -ne 0) { throw "R2 public installer alias upload failed" }
           $download = Join-Path $env:RUNNER_TEMP "AutoVoucher-Setup-readback.exe"
-          Invoke-WebRequest -UseBasicParsing "$($env:AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL.TrimEnd('/'))/$alias" -OutFile $download
+          Invoke-WebRequest -UseBasicParsing "$($env:AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL.TrimEnd('/'))/downloads/$channel/AutoVoucher-Setup-windows-x64.exe" -OutFile $download
           $expected = (Get-FileHash $setup -Algorithm SHA256).Hash
           $actual = (Get-FileHash $download -Algorithm SHA256).Hash
           if ($actual -ne $expected) { throw "Public installer alias hash mismatch" }
