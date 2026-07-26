@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import uuid
 import zipfile
@@ -516,6 +517,12 @@ def file_type(suffix: str) -> str:
     }[suffix]
 
 
+def worker_command(worker: str, *arguments: str) -> list[str]:
+    if Path(worker).suffix.lower() in {".py", ".pyw"}:
+        return [sys.executable, worker, *arguments]
+    return [worker, *arguments]
+
+
 def extract_pdf_text(content: bytes) -> str:
     worker = os.environ.get("AUTO_VOUCHER_PDF_WORKER", "").strip()
     if worker:
@@ -524,7 +531,7 @@ def extract_pdf_text(content: bytes) -> str:
             output = Path(directory) / "result.json"
             source.write_bytes(content)
             result = subprocess.run(
-                [worker, "text", str(source), str(output)],
+                worker_command(worker, "text", str(source), str(output)),
                 capture_output=True,
                 timeout=30,
                 check=False,
@@ -564,7 +571,7 @@ def extract_ocr_candidates(filename: str, content: bytes) -> dict[str, Any] | No
             image_path = root / "page.png"
             if pdf_worker:
                 result = subprocess.run(
-                    [pdf_worker, "render-first", str(source), str(image_path)],
+                    worker_command(pdf_worker, "render-first", str(source), str(image_path)),
                     capture_output=True,
                     timeout=45,
                     check=False,
@@ -589,7 +596,7 @@ def extract_ocr_candidates(filename: str, content: bytes) -> dict[str, Any] | No
         if worker:
             output_path = root / "ocr-result.json"
             result = subprocess.run(
-                [worker, str(image_path), str(output_path)],
+                worker_command(worker, str(image_path), str(output_path)),
                 capture_output=True,
                 timeout=60,
                 check=False,

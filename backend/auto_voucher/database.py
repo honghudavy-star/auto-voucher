@@ -5,7 +5,7 @@ import os
 import platform
 import sqlite3
 import tempfile
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -238,12 +238,12 @@ class Database:
     def backup_bytes(self) -> bytes:
         with tempfile.TemporaryDirectory(prefix="auto-voucher-db-backup-") as directory:
             target_path = Path(directory) / "auto-voucher.sqlite3"
-            with self.connect() as source, sqlite3.connect(target_path) as target:
+            with self.connect() as source, closing(sqlite3.connect(target_path)) as target:
                 source.backup(target)
             return target_path.read_bytes()
 
     def quick_check(self) -> str:
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection:
             row = connection.execute("PRAGMA quick_check").fetchone()
         return str(row[0] if row else "unknown")
 
@@ -251,7 +251,7 @@ class Database:
         return self.db_path.stat().st_size if self.db_path.exists() else 0
 
     def schema_version(self) -> int:
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(sqlite3.connect(self.db_path)) as connection:
             row = connection.execute(
                 "SELECT version FROM schema_meta WHERE singleton = 1"
             ).fetchone()
