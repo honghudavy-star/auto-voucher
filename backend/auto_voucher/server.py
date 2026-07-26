@@ -43,6 +43,7 @@ MAX_REQUEST_BYTES = 200 * 1024 * 1024
 class JobManager:
     def __init__(self, diagnostics: DiagnosticLogger | None = None) -> None:
         self.jobs: dict[str, dict] = {}
+        self.threads: dict[str, threading.Thread] = {}
         self.lock = threading.Lock()
         self.diagnostics = diagnostics
 
@@ -124,8 +125,19 @@ class JobManager:
                         operation=operation,
                         duration_ms=round((time.monotonic() - started) * 1000),
                     )
+            finally:
+                with self.lock:
+                    self.threads.pop(job_id, None)
 
-        threading.Thread(target=run, name=job_id, daemon=True).start()
+        thread = threading.Thread(target=run, name=job_id, daemon=True)
+        with self.lock:
+            self.threads[job_id] = thread
+            try:
+                thread.start()
+            except Exception:
+                self.threads.pop(job_id, None)
+                self.jobs.pop(job_id, None)
+                raise
         return self.get(job_id)
 
     def get(self, job_id: str) -> dict:
@@ -148,6 +160,19 @@ class JobManager:
                 if item["status"] in {"queued", "running"}
             ]
         return {"active": active, "activeCount": len(active)}
+
+    def wait_for_idle(self, timeout: float = 5.0) -> bool:
+        deadline = time.monotonic() + max(timeout, 0)
+        while True:
+            with self.lock:
+                threads = list(self.threads.values())
+            if not threads:
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            for thread in threads:
+                thread.join(min(remaining, 0.1))
 
 
 def make_handler(
@@ -224,10 +249,12 @@ def make_handler(
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "AutoVoucher/0.2"
+        job_manager = jobs
 
         def handle_one_request(self) -> None:
             self._request_id = f"REQ-{uuid.uuid4().hex[:12].upper()}"
             self._request_started = time.monotonic()
+            self._response_started = False
             try:
                 super().handle_one_request()
             except Exception as exc:
@@ -242,13 +269,20 @@ def make_handler(
                     context={"path": getattr(self, "path", "")},
                     duration_ms=round((time.monotonic() - self._request_started) * 1000),
                 )
-                try:
-                    self.json_response(
-                        {"error": "本地服务发生未处理异常，请在诊断日志中复制支持编号"},
-                        HTTPStatus.INTERNAL_SERVER_ERROR,
-                    )
-                except Exception:
-                    pass
+                if self._response_started:
+                    self.close_connection = True
+                else:
+                    try:
+                        self.json_response(
+                            {"error": "本地服务发生未处理异常，请在诊断日志中复制支持编号"},
+                            HTTPStatus.INTERNAL_SERVER_ERROR,
+                        )
+                    except Exception:
+                        pass
+
+        def send_response(self, code: int, message: str | None = None) -> None:
+            self._response_started = True
+            super().send_response(code, message)
 
         def do_GET(self) -> None:
             parsed_request = urlparse(self.path)
@@ -998,9 +1032,10 @@ def main() -> None:
     diagnostics = DiagnosticLogger(database)
     bundled_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
     static_dir = bundled_root / "dist"
+    handler = make_handler(database, static_dir, diagnostics, args.host, args.port)
     server = ThreadingHTTPServer(
         (args.host, args.port),
-        make_handler(database, static_dir, diagnostics, args.host, args.port),
+        handler,
     )
     url = f"http://{args.host}:{args.port}"
     print(f"Auto Voucher 已启动：{url}")
@@ -1019,6 +1054,16 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        jobs_finished = handler.job_manager.wait_for_idle(5)
+        if not jobs_finished:
+            diagnostics.log(
+                "WARNING",
+                "background_job",
+                "JOB_SHUTDOWN_TIMEOUT",
+                "本地服务停止前仍有后台任务未在 5 秒内完成",
+                user_action="重新启动后检查诊断日志和最近导入结果，再决定是否重试。",
+                context=handler.job_manager.status(),
+            )
         diagnostics.log(
             "INFO",
             "application",

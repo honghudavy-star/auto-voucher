@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import platform
 import re
 from pathlib import Path
 from typing import Any
@@ -80,13 +81,28 @@ class SecretStore:
 
     def status(self) -> dict[str, str | bool]:
         keyring = self._keyring()
-        backend = keyring.get_keyring()
+        try:
+            backend = keyring.get_keyring()
+        except Exception as exc:
+            return {
+                "available": False,
+                "backend": "Unavailable",
+                "message": f"{self._unavailable_hint()}（{redact_text(exc)}）",
+            }
         usable = backend.priority > 0
         return {
             "available": usable,
             "backend": backend.__class__.__name__,
-            "message": "操作系统密钥库可用" if usable else "没有可用的操作系统密钥库后端",
+            "message": "操作系统密钥库可用" if usable else self._unavailable_hint(),
         }
+
+    @staticmethod
+    def _unavailable_hint() -> str:
+        return {
+            "Windows": "Windows 凭据管理器不可用，请登录桌面会话并确认 Credential Manager 服务正在运行",
+            "Darwin": "macOS 钥匙串不可用，请登录桌面会话并确认“钥匙串访问”可正常打开",
+            "Linux": "系统密钥库不可用，请安装并启动 gnome-keyring 或 KWallet 与 D-Bus 会话",
+        }.get(platform.system(), "没有可用的操作系统密钥库后端")
 
     def set(self, connector_id: str, secret_name: str, value: str) -> None:
         if not connector_id or not secret_name or not value:

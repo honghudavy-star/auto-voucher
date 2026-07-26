@@ -638,11 +638,22 @@ class ConfiguredFinanceConnector:
     def _request(self, profile_name: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         profile = self._profile(profile_name)
         method = str(profile.get("method") or "POST").upper()
+        url = f"{self.base_url}/{str(profile['path']).lstrip('/')}"
+        request_payload = payload
+        if method == "GET" and payload:
+            query = urllib.parse.urlencode(
+                {key: value for key, value in payload.items() if value is not None},
+                doseq=True,
+            )
+            if query:
+                separator = "&" if urllib.parse.urlparse(url).query else "?"
+                url = f"{url}{separator}{query}"
+            request_payload = None
         status, body, _headers = self.transport.request(
             method,
-            f"{self.base_url}/{str(profile['path']).lstrip('/')}",
+            url,
             headers=self._headers(),
-            payload=payload if method != "GET" else None,
+            payload=request_payload,
         )
         if status in {401, 403}:
             raise ConnectorError("PERMISSION_DENIED", "目标系统身份或权限校验失败", "permission")

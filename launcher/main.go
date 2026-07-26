@@ -1418,6 +1418,10 @@ func compareVersions(left, right string) int {
 	return 0
 }
 
+func supportsWindowsVersion(major, build uint32) bool {
+	return major > 10 || (major == 10 && build >= 19045)
+}
+
 func verifyFileHash(path, expected string) error {
 	if expected == "" {
 		return errors.New("缺少文件完整性摘要")

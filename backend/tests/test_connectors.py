@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+import urllib.parse
 
 from auto_voucher.connectors import (
     ConfiguredFinanceConnector,
@@ -44,6 +45,34 @@ class ConnectorTests(unittest.TestCase):
             with self.subTest(adapter=adapter.__name__):
                 for method in contract:
                     self.assertTrue(callable(getattr(adapter, method, None)), method)
+
+    def test_configured_get_profile_encodes_payload_as_query_parameters(self):
+        transport = FakeTransport([(200, {"ok": True}, {})])
+        connector = ConfiguredFinanceConnector(
+            {
+                "baseUrl": "http://127.0.0.1:9999",
+                "environment": "测试环境",
+                "endpointProfile": {
+                    "probe": {"path": "/probe?locale=zh-CN", "method": "GET"},
+                },
+            },
+            "token",
+            transport,
+        )
+        connector._request("probe", {
+            "accountId": "账套 A",
+            "fields": ["code", "name"],
+            "ignored": None,
+        })
+        request = transport.requests[0]
+        parsed = urllib.parse.urlparse(request["url"])
+        query = urllib.parse.parse_qs(parsed.query)
+        self.assertEqual(request["method"], "GET")
+        self.assertIsNone(request["payload"])
+        self.assertEqual(query["locale"], ["zh-CN"])
+        self.assertEqual(query["accountId"], ["账套 A"])
+        self.assertEqual(query["fields"], ["code", "name"])
+        self.assertNotIn("ignored", query)
 
     def test_feishu_probe_checks_identity_approval_scope_and_capabilities(self):
         transport = FakeTransport([

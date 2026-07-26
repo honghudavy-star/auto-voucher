@@ -140,6 +140,35 @@ class BackendTests(unittest.TestCase):
             self.assertEqual(state["sourceDocuments"][0]["signatureStatus"], "not_checked")
             self.assertIn("电子签名待验证", [item["type"] for item in state["exceptions"]])
 
+    def test_ofd_invalid_amount_still_archives_original_and_signature_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory))
+            database.put_state(empty_state())
+            output = BytesIO()
+            with zipfile.ZipFile(output, "w") as archive:
+                archive.writestr(
+                    "Doc_0/Attachs/invoice.xml",
+                    """<?xml version="1.0" encoding="UTF-8"?>
+                    <Invoice>
+                      <销售方名称>字段异常供应商</销售方名称>
+                      <价税合计>金额待核对</价税合计>
+                      <发票号码>OFD-BAD-1</发票号码>
+                    </Invoice>""",
+                )
+                archive.writestr("Doc_0/Signs/Signatures.xml", "<Signatures />")
+            content = output.getvalue()
+            result = VoucherService(database).import_files(
+                [("字段异常电子发票.ofd", content, "application/ofd")]
+            )
+            state = database.get_state()
+            exception_types = {item["type"] for item in state["exceptions"]}
+            self.assertEqual(result["success"], 1)
+            self.assertEqual(state["events"], [])
+            self.assertEqual(state["sourceDocuments"][0]["signatureStatus"], "not_checked")
+            self.assertIn("电子签名待验证", exception_types)
+            self.assertIn("结构化字段待配置", exception_types)
+            self.assertTrue(database.has_source(hashlib.sha256(content).hexdigest()))
+
     def test_disk_space_shortage_stops_new_archive_without_partial_state(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory))

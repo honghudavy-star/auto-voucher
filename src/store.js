@@ -66,16 +66,17 @@ export async function loadState() {
 export function saveState(state) {
   state.lastSavedAt = now();
   const snapshot = JSON.parse(JSON.stringify(state));
-  saveQueue = saveQueue
+  const request = saveQueue
     .catch(() => undefined)
     .then(() => apiRequest("/api/state", {
       method: "PUT",
       body: JSON.stringify({ state: snapshot }),
-    }))
-    .catch((error) => {
-      window.dispatchEvent(new CustomEvent("auto-voucher:sync-error", { detail: error.message }));
-    });
-  return saveQueue;
+    }));
+  saveQueue = request;
+  request.catch((error) => {
+    window.dispatchEvent(new CustomEvent("auto-voucher:sync-error", { detail: error.message }));
+  });
+  return request;
 }
 
 export async function resetState() {

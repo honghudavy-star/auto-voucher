@@ -4,6 +4,14 @@ Auto Voucher 是一个开源、本地优先的财务凭证自动化工作台。�
 
 数据默认保存在用户本机。系统只生成和保存凭证草稿，不自动提交、审核、过账或结账。
 
+## 下载
+
+Windows 10 22H2 / Windows 11 x64 用户可下载轻量安装器：
+
+- [下载 Auto Voucher 稳定版](https://updates.iagent7.com/auto-voucher/downloads/stable/AutoVoucher-Setup-windows-x64.exe)
+
+当前安装器未使用 Authenticode 代码签名，Windows 可能显示“未知发布者”。请只从本仓库或上述官方地址下载，并在安装前核对 [GitHub Release](https://github.com/honghudavy-star/auto-voucher/releases) 中公布的 SHA-256。
+
 ## 主要功能
 
 - 导入 CSV、XLSX、XML、XBRL、OFD、PDF、图片和银行流水；
@@ -81,6 +89,8 @@ docs/         架构、诊断和发布文档
 - [系统架构](docs/architecture.md)
 - [诊断日志与技术支持](docs/诊断日志与技术支持.md)
 - [Windows 发版清单](docs/Windows发版清单.md)
+- [v0.2.0 发布说明](docs/v0.2.0发布说明.md)
+- [长视频讲解与宣传脚本](docs/Auto-Voucher长视频讲解与宣传脚本.md)
 - [产品需求说明](specs/auto-voucher-prd.spec.md)
 
 ## 参与贡献
