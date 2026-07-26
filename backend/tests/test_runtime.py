@@ -32,6 +32,11 @@ class FakeSecretStore:
         self.values.pop((connector_id, secret_name), None)
 
 
+class CleanupFailingSecretStore(FakeSecretStore):
+    def delete(self, connector_id, secret_name):
+        raise Exception("Windows 登录会话已终止")
+
+
 class RuntimeTests(unittest.TestCase):
     def make_service(self, directory, *, secrets=True):
         root = Path(directory)
@@ -96,6 +101,15 @@ class RuntimeTests(unittest.TestCase):
             self.assertTrue(credential["productionBlocking"])
             with self.assertRaisesRegex(ValueError, "Windows 凭据管理器"):
                 service.assert_production_ready()
+
+    def test_credential_manager_cleanup_failure_stays_degraded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.make_service(directory)
+            service.secret_store = CleanupFailingSecretStore(available=False)
+            result = service._keyring_check()
+            self.assertEqual(result["status"], "warning")
+            self.assertFalse(result["blocking"])
+            self.assertTrue(result["productionBlocking"])
 
     def test_repair_whitelist_does_not_modify_database(self):
         with tempfile.TemporaryDirectory() as directory:

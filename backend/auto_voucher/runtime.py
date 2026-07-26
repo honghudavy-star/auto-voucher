@@ -468,7 +468,7 @@ class EnvironmentService:
         finally:
             try:
                 self.secret_store.delete(connector_id, secret_name)
-            except (RuntimeError, OSError):
+            except Exception:
                 pass
         return self._result(
             "credential-manager",
