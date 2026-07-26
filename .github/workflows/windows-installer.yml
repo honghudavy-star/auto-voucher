@@ -254,7 +254,9 @@ jobs:
             $localFile = if ($file.StartsWith("AutoVoucherLauncher-")) { "release\AutoVoucherLauncher.exe" } else { "release\$file" }
             $expected = (Get-Item $localFile).Length
             $response = Invoke-WebRequest -UseBasicParsing -Method Head "$base/$channel/$file"
-            if ([int64]$response.Headers["Content-Length"] -ne $expected) { throw "Published size mismatch for $file" }
+            $contentLength = $response.Headers["Content-Length"] | Select-Object -First 1
+            if (-not $contentLength) { throw "Published response has no Content-Length for $file" }
+            if ([int64]$contentLength -ne $expected) { throw "Published size mismatch for $file" }
           }
 
       - name: Publish verified public installer alias
