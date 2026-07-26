@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools==83.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "auto-voucher"
+version = "0.2.0"
+description = "Local-first accounting voucher automation workbench"
+requires-python = ">=3.11"
+dependencies = [
+  "openpyxl==3.1.5",
+  "keyring==25.7.0",
+]
+
+[project.optional-dependencies]
+ocr = [
+  "rapidocr-onnxruntime==1.4.4",
+]
+pdf = [
+  "pypdfium2==4.30.0",
+]
+
+[dependency-groups]
+release = [
+  "pip-audit==2.10.1",
+  "pyinstaller==6.21.0",
+]
+
+[project.scripts]
+auto-voucher = "auto_voucher.server:main"
+
+[tool.setuptools]
+package-dir = {"" = "backend"}
+
+[tool.setuptools.packages.find]
+where = ["backend"]

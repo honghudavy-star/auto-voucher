@@ -1,12 +1,22 @@
 # Dependencies and build output
 node_modules/
+.venv/
 dist/
 .vite/
 coverage/
+.codegraph/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build-pyinstaller/
+build-ocr/
+build-pdf/
+dist-pyinstaller/
+dist-ocr/
+dist-pdf/
+release/
 
-# Private product material
-docs/
-specs/
+# Generated visual assets stay local; PRD and architecture documents are source.
 design/
 
 # Environment variables and secrets
