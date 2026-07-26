@@ -51,9 +51,20 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Scan repository for leaked secrets
+        shell: pwsh
+        run: |
+          $version = "8.30.1"
+          $archive = Join-Path $env:RUNNER_TEMP "gitleaks-$version-windows-x64.zip"
+          $download = "https://github.com/gitleaks/gitleaks/releases/download/v$version/gitleaks_${version}_windows_x64.zip"
+          Invoke-WebRequest -UseBasicParsing $download -OutFile $archive
+          $expected = "d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e"
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "Gitleaks archive checksum mismatch" }
+          $install = Join-Path $env:RUNNER_TEMP "gitleaks-$version"
+          Expand-Archive -Path $archive -DestinationPath $install -Force
+          & (Join-Path $install "gitleaks.exe") git . --redact --no-banner
+          if ($LASTEXITCODE -ne 0) { throw "Gitleaks found a leak or failed to scan the repository" }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
