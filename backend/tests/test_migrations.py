@@ -2,6 +2,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,7 +17,7 @@ class MigrationTests(unittest.TestCase):
             root.mkdir(parents=True, exist_ok=True)
             path = root / "auto-voucher.sqlite3"
             state = {"version": 2, "auditLog": [], "events": [], "vouchers": []}
-            with sqlite3.connect(path) as connection:
+            with closing(sqlite3.connect(path)) as connection:
                 connection.execute(
                     """
                     CREATE TABLE app_state (
@@ -34,6 +35,7 @@ class MigrationTests(unittest.TestCase):
                     """,
                     (json.dumps(state),),
                 )
+                connection.commit()
 
             database = Database(root)
 
@@ -63,7 +65,7 @@ class MigrationTests(unittest.TestCase):
             ):
                 Database(root)
 
-            with sqlite3.connect(database.db_path) as connection:
+            with closing(sqlite3.connect(database.db_path)) as connection:
                 probe = connection.execute(
                     """
                     SELECT name FROM sqlite_master
@@ -80,15 +82,16 @@ class MigrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = Database(root)
-            with sqlite3.connect(database.db_path) as connection:
+            with closing(sqlite3.connect(database.db_path)) as connection:
                 connection.execute(
                     "UPDATE schema_meta SET version = 99 WHERE singleton = 1"
                 )
+                connection.commit()
 
             with self.assertRaisesRegex(ValueError, "高于当前程序支持"):
                 Database(root)
 
-            with sqlite3.connect(database.db_path) as connection:
+            with closing(sqlite3.connect(database.db_path)) as connection:
                 version = connection.execute(
                     "SELECT version FROM schema_meta WHERE singleton = 1"
                 ).fetchone()[0]

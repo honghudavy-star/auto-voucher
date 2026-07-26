@@ -280,7 +280,7 @@ class BackendTests(unittest.TestCase):
 
     def test_optional_pdf_worker_contract_keeps_component_out_of_core(self):
         with tempfile.TemporaryDirectory() as directory:
-            worker = Path(directory) / "pdf-worker"
+            worker = Path(directory) / "pdf-worker.py"
             worker.write_text(
                 "#!/usr/bin/env python3\n"
                 "import json,sys\n"
@@ -293,7 +293,7 @@ class BackendTests(unittest.TestCase):
 
     def test_optional_ocr_worker_returns_real_confidence_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
-            worker = Path(directory) / "ocr-worker"
+            worker = Path(directory) / "ocr-worker.py"
             worker.write_text(
                 "#!/usr/bin/env python3\n"
                 "import json,sys\n"
