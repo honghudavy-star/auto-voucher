@@ -924,7 +924,7 @@ def create_backup_package(database: Database, state: dict) -> bytes:
     }
     for source in database.archive_dir.rglob("*"):
         if source.is_file():
-            members[str(source.relative_to(database.data_dir))] = source.read_bytes()
+            members[source.relative_to(database.data_dir).as_posix()] = source.read_bytes()
     manifest = {
         "kind": "auto-voucher-backup",
         "version": 2,
