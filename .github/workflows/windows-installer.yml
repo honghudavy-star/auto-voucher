@@ -267,12 +267,12 @@ jobs:
           $version = "${{ steps.release.outputs.version }}"
           $setup = "release\AutoVoucher-Setup-$version-windows-x64.exe"
           $prefix = $env:AUTO_VOUCHER_R2_PREFIX.Trim("/")
-          $alias = "$prefix/downloads/$channel/AutoVoucher-Setup-windows-x64.exe"
+          $alias = "$prefix/$channel/AutoVoucher-Setup-windows-x64.exe"
           $endpoint = "https://$env:CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com"
           aws s3api put-object --no-cli-pager --endpoint-url $endpoint --bucket $env:AUTO_VOUCHER_R2_BUCKET --key $alias --body $setup --content-type "application/vnd.microsoft.portable-executable" --cache-control "no-store"
           if ($LASTEXITCODE -ne 0) { throw "R2 public installer alias upload failed" }
           $download = Join-Path $env:RUNNER_TEMP "AutoVoucher-Setup-readback.exe"
-          Invoke-WebRequest -UseBasicParsing "$($env:AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL.TrimEnd('/'))/downloads/$channel/AutoVoucher-Setup-windows-x64.exe" -OutFile $download
+          Invoke-WebRequest -UseBasicParsing "$($env:AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL.TrimEnd('/'))/$channel/AutoVoucher-Setup-windows-x64.exe" -OutFile $download
           $expected = (Get-FileHash $setup -Algorithm SHA256).Hash
           $actual = (Get-FileHash $download -Algorithm SHA256).Hash
           if ($actual -ne $expected) { throw "Public installer alias hash mismatch" }

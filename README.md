@@ -8,7 +8,7 @@ Auto Voucher 是一个开源、本地优先的财务凭证自动化工作台。�
 
 Windows 10 22H2 / Windows 11 x64 用户可下载轻量安装器：
 
-- [下载 Auto Voucher 稳定版](https://updates.iagent7.com/auto-voucher/downloads/stable/AutoVoucher-Setup-windows-x64.exe)
+- [下载 Auto Voucher 稳定版](https://updates.iagent7.com/auto-voucher/stable/AutoVoucher-Setup-windows-x64.exe)
 
 当前安装器未使用 Authenticode 代码签名，Windows 可能显示“未知发布者”。请只从本仓库或上述官方地址下载，并在安装前核对 [GitHub Release](https://github.com/honghudavy-star/auto-voucher/releases) 中公布的 SHA-256。
 
