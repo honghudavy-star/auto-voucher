@@ -36,7 +36,7 @@
 3. 从以下地址重新下载，不使用 CI 本地产物代替公开读取：
 
    ```text
-   <PUBLIC_UPDATE_BASE_URL>/downloads/pilot/AutoVoucher-Setup-windows-x64.exe
+   <PUBLIC_UPDATE_BASE_URL>/pilot/AutoVoucher-Setup-windows-x64.exe
    ```
 
 4. 在干净 Windows 10 22H2 和 Windows 11 x64 各完成：

@@ -277,7 +277,7 @@ Auto Voucher 是一个开源、本地优先的财务凭证自动化工作台。�
 系统默认只保存草稿，不自动提交、审核、过账或结账。ERP 真实连接能力取决于客户的产品版本、接口授权和测试账套。
 
 - 项目地址：https://github.com/honghudavy-star/auto-voucher
-- Windows 下载：https://updates.iagent7.com/auto-voucher/downloads/stable/AutoVoucher-Setup-windows-x64.exe
+- Windows 下载：https://updates.iagent7.com/auto-voucher/stable/AutoVoucher-Setup-windows-x64.exe
 - 问题反馈：https://github.com/honghudavy-star/auto-voucher/issues
 
 Windows 安装器当前未使用 Authenticode，系统可能显示“未知发布者”。请只从项目仓库或官方更新地址下载，并核对 Release 中的 SHA-256。
