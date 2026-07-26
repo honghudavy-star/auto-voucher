@@ -48,7 +48,7 @@ func checkSupportedWindows() error {
 	if result != 0 {
 		return fmt.Errorf("无法读取 Windows 版本：%v", callErr)
 	}
-	if version.major != 10 || version.build < 19045 {
+	if !supportsWindowsVersion(version.major, version.build) {
 		return fmt.Errorf(
 			"需要 Windows 10 22H2（内部版本 19045）或 Windows 11，当前内部版本为 %d",
 			version.build,

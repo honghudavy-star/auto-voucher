@@ -145,10 +145,16 @@ class VoucherService:
         master_records = parse_master_data_rows(mapped_rows)
         unique = uuid.uuid4().hex[:8]
         document_id = f"DOC-{unique.upper()}"
-        candidates = [
-            event_from_row(row, document_id, index, unique)
-            for index, row in enumerate(mapped_rows, start=1)
-        ] if not master_records else []
+        candidates = []
+        candidate_errors: list[tuple[int, str]] = []
+        if not master_records:
+            for index, row in enumerate(mapped_rows, start=1):
+                try:
+                    candidates.append(event_from_row(row, document_id, index, unique))
+                except ValueError as exc:
+                    if suffix != ".ofd":
+                        raise
+                    candidate_errors.append((index, str(exc)))
         created_events = 0
         linked_events = 0
         blocking_exceptions = 0
@@ -199,6 +205,19 @@ class VoucherService:
                 candidate.setdefault("exceptionIds", []).append(f"EX-SIGN-{unique.upper()}")
                 candidate["status"] = "待处理"
             blocking_exceptions += 1
+        for row_index, message in candidate_errors:
+            state["exceptions"].insert(0, {
+                "id": f"EX-ROW-{unique.upper()}-{row_index}",
+                "eventId": None,
+                "documentIds": [document_id],
+                "type": "结构化字段待配置",
+                "severity": "阻断",
+                "title": f"{safe_name} 第 {row_index} 条结构化记录无法生成事项",
+                "detail": message,
+                "suggestion": "核对 OFD 内嵌 XML/XBRL 的字段映射和金额格式；原件及签名材料已保留。",
+                "status": "待处理",
+            })
+            blocking_exceptions += 1
         if suffix == ".pdf":
             extracted = extract_pdf_text(content)
             if extracted:
@@ -226,7 +245,7 @@ class VoucherService:
                 created_events += int(created)
                 linked_events += int(not created)
                 blocking_exceptions += blocked
-        else:
+        elif not candidate_errors:
             exception_id = f"EX-{unique.upper()}"
             ocr_ready = document.get("extractionStatus") == "ocr_candidates"
             text_candidates_ready = document.get("extractionStatus") == "text_candidates"

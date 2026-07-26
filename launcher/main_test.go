@@ -27,6 +27,21 @@ func TestCompareVersions(t *testing.T) {
 	}
 }
 
+func TestSupportsWindowsVersion(t *testing.T) {
+	if supportsWindowsVersion(10, 19044) {
+		t.Fatal("Windows 10 before 22H2 should be rejected")
+	}
+	if !supportsWindowsVersion(10, 19045) {
+		t.Fatal("Windows 10 22H2 should be accepted")
+	}
+	if !supportsWindowsVersion(10, 26100) {
+		t.Fatal("Windows 11 current builds should be accepted")
+	}
+	if !supportsWindowsVersion(11, 1) {
+		t.Fatal("future Windows major versions should not be rejected solely by major number")
+	}
+}
+
 func TestRolloutIsDeterministic(t *testing.T) {
 	first := rolloutAllowed("device-1", 20)
 	for index := 0; index < 20; index++ {
