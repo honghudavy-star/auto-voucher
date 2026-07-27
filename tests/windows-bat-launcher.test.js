@@ -5,16 +5,16 @@ import test from "node:test";
 const launcherPath = new URL("../scripts/start-auto-voucher.bat", import.meta.url);
 const userEntryPath = new URL("../Start-Auto-Voucher.bat", import.meta.url);
 const updaterPath = new URL("../scripts/source-update.ps1", import.meta.url);
-const statusPagePath = new URL("../scripts/startup-status.ps1", import.meta.url);
+const environmentBootstrapPath = new URL("../scripts/environment-bootstrap.ps1", import.meta.url);
 const bundleBuilderPath = new URL("../scripts/build-windows-source-bundle.ps1", import.meta.url);
 const packagePath = new URL("../package.json", import.meta.url);
 
 test("Windows BAT launcher preserves the complete source runtime", async () => {
-  const [launcher, userEntry, updater, statusPage, bundleBuilder, packageJson] = await Promise.all([
+  const [launcher, userEntry, updater, environmentBootstrap, bundleBuilder, packageJson] = await Promise.all([
     readFile(launcherPath, "utf8"),
     readFile(userEntryPath, "utf8"),
     readFile(updaterPath, "utf8"),
-    readFile(statusPagePath, "utf8"),
+    readFile(environmentBootstrapPath, "utf8"),
     readFile(bundleBuilderPath, "utf8"),
     readFile(packagePath, "utf8").then(JSON.parse),
   ]);
@@ -24,8 +24,11 @@ test("Windows BAT launcher preserves the complete source runtime", async () => {
   assert.match(userEntry, /package is incomplete/);
   assert.match(userEntry, /pause/);
   assert.doesNotMatch(userEntry, /[^\x00-\x7F]/);
-  assert.match(launcher, /startup-status\.ps1/);
-  assert.match(launcher, /start "" "%STATUS_PAGE%"/);
+  assert.match(launcher, /environment-bootstrap\.ps1/);
+  assert.match(launcher, /start "" "%ENV_URL%"/);
+  assert.match(launcher, /environment-ready/);
+  assert.match(launcher, /call "%ENV_COMMAND%"/);
+  assert.match(launcher, /:wait_for_environment/);
   assert.match(launcher, /Start-Process/);
   assert.match(launcher, /startup\.log/);
   assert.match(launcher, /scripts\\source-update\.ps1/);
@@ -41,16 +44,27 @@ test("Windows BAT launcher preserves the complete source runtime", async () => {
   assert.match(updater, /archive\/refs\/heads\/main\.zip/);
   assert.match(updater, /Start-Auto-Voucher\.bat/);
   assert.match(updater, /exit 0\s*$/);
-  assert.match(statusPage, /&#27491;&#22312;&#26816;&#27979;/);
-  assert.match(statusPage, /Node\.js/);
-  assert.match(statusPage, /Python/);
-  assert.match(statusPage, /location\.replace/);
-  assert.doesNotMatch(statusPage, /[^\x00-\x7F]/);
+  assert.match(environmentBootstrap, /id="action"/);
+  assert.match(environmentBootstrap, /\/api\/install/);
+  assert.match(environmentBootstrap, /\/api\/status/);
+  assert.match(environmentBootstrap, /Install-LocalNode/);
+  assert.match(environmentBootstrap, /Install-LocalPython/);
+  assert.match(environmentBootstrap, /UV_PYTHON_INSTALL_DIR/);
+  assert.match(environmentBootstrap, /UV_PYTHON_BIN_DIR/);
+  assert.match(environmentBootstrap, /python install \$pythonVersion --managed-python --no-progress/);
+  assert.match(environmentBootstrap, /python find \$pythonVersion --managed-python/);
+  assert.match(environmentBootstrap, /7df0bc9375723f4a86b3aa1b7cc73342423d9677a8df4538aca31a049e309c29/);
+  assert.match(environmentBootstrap, /acfde570451cfdb8689fa159a138ee805ba4e241c466432750302c86254b0984/);
+  assert.doesNotMatch(environmentBootstrap, /python-\$pythonVersion-amd64\.exe/);
+  assert.doesNotMatch(environmentBootstrap, /Get-AuthenticodeSignature/);
+  assert.match(environmentBootstrap, /&#33258;&#21160;&#23433;&#35013;&#29615;&#22659;&#24182;&#32487;&#32493;/);
+  assert.doesNotMatch(environmentBootstrap, /href="https:\/\//);
+  assert.doesNotMatch(environmentBootstrap, /[^\x00-\x7F]/);
   assert.match(bundleBuilder, /"AutoVoucher"/);
   assert.match(bundleBuilder, /"Start-Auto-Voucher\.bat"/);
   assert.match(bundleBuilder, /Remove-Item -LiteralPath \(Join-Path \$inner "Start-Auto-Voucher\.bat"\)/);
   assert.match(bundleBuilder, /Bundle root must contain only/);
   assert.match(bundleBuilder, /exit 0\s*$/);
-  assert.equal(packageJson.version, "0.2.4");
+  assert.equal(packageJson.version, "0.2.5");
   assert.doesNotMatch(launcher, /AutoVoucher(?:Core|OCR|PDF|Setup).*\.exe/i);
 });
