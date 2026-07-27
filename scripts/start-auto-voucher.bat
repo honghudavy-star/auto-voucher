@@ -14,6 +14,8 @@ set "ENV_SCRIPT=%CD%\scripts\environment-bootstrap.ps1"
 set "ENV_READY=%RUNTIME_DIR%\environment-ready"
 set "ENV_COMMAND=%RUNTIME_DIR%\environment.cmd"
 set "ENV_SERVER_PID=%RUNTIME_DIR%\environment-server.pid"
+set "ENV_SERVER_OUT=%RUNTIME_DIR%\environment-server.out.log"
+set "ENV_SERVER_ERR=%RUNTIME_DIR%\environment-server.err.log"
 set "LOG_FILE=%RUNTIME_DIR%\startup.log"
 set "SERVER_OUT=%RUNTIME_DIR%\server.out.log"
 set "SERVER_ERR=%RUNTIME_DIR%\server.err.log"
@@ -27,7 +29,7 @@ if exist "%ENV_SERVER_PID%" (
 if exist "%ENV_READY%" del /q "%ENV_READY%"
 if exist "%ENV_COMMAND%" del /q "%ENV_COMMAND%"
 
-start "" /b powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ENV_SCRIPT%" -Root "%CD%" -Mode Serve -Port %AUTO_VOUCHER_ENV_PORT% -AppUrl "%APP_URL%" >> "%LOG_FILE%" 2>&1
+start "" /b powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%ENV_SCRIPT%" -Root "%CD%" -Mode Serve -Port %AUTO_VOUCHER_ENV_PORT% -AppUrl "%APP_URL%" > "%ENV_SERVER_OUT%" 2> "%ENV_SERVER_ERR%"
 
 set "ENV_SERVER_UP="
 for /L %%I in (1,1,30) do (

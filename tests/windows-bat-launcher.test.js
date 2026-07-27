@@ -31,6 +31,9 @@ test("Windows BAT launcher preserves the complete source runtime", async () => {
   assert.match(launcher, /environment-ready/);
   assert.match(launcher, /call "%ENV_COMMAND%"/);
   assert.match(launcher, /:wait_for_environment/);
+  assert.match(launcher, /ENV_SERVER_OUT=.*environment-server\.out\.log/);
+  assert.match(launcher, /ENV_SERVER_ERR=.*environment-server\.err\.log/);
+  assert.doesNotMatch(launcher, /-Mode Serve[^\r\n]*LOG_FILE/);
   assert.match(launcher, /Start-Process/);
   assert.match(launcher, /startup\.log/);
   assert.match(launcher, /scripts\\source-update\.ps1/);
@@ -73,6 +76,6 @@ test("Windows BAT launcher preserves the complete source runtime", async () => {
   assert.match(sourceReleaseWorkflow, /-ExitWhenTerminal/);
   assert.doesNotMatch(sourceReleaseWorkflow, /Stop-Job/);
   assert.doesNotMatch(sourceReleaseWorkflow, /startup-status\.ps1/);
-  assert.equal(packageJson.version, "0.2.5");
+  assert.equal(packageJson.version, "0.2.6");
   assert.doesNotMatch(launcher, /AutoVoucher(?:Core|OCR|PDF|Setup).*\.exe/i);
 });
