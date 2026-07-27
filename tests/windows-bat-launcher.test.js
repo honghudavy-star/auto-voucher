@@ -7,15 +7,17 @@ const userEntryPath = new URL("../Start-Auto-Voucher.bat", import.meta.url);
 const updaterPath = new URL("../scripts/source-update.ps1", import.meta.url);
 const environmentBootstrapPath = new URL("../scripts/environment-bootstrap.ps1", import.meta.url);
 const bundleBuilderPath = new URL("../scripts/build-windows-source-bundle.ps1", import.meta.url);
+const sourceReleaseWorkflowPath = new URL("../.github/workflows/windows-source-release.yml", import.meta.url);
 const packagePath = new URL("../package.json", import.meta.url);
 
 test("Windows BAT launcher preserves the complete source runtime", async () => {
-  const [launcher, userEntry, updater, environmentBootstrap, bundleBuilder, packageJson] = await Promise.all([
+  const [launcher, userEntry, updater, environmentBootstrap, bundleBuilder, sourceReleaseWorkflow, packageJson] = await Promise.all([
     readFile(launcherPath, "utf8"),
     readFile(userEntryPath, "utf8"),
     readFile(updaterPath, "utf8"),
     readFile(environmentBootstrapPath, "utf8"),
     readFile(bundleBuilderPath, "utf8"),
+    readFile(sourceReleaseWorkflowPath, "utf8"),
     readFile(packagePath, "utf8").then(JSON.parse),
   ]);
 
@@ -65,6 +67,9 @@ test("Windows BAT launcher preserves the complete source runtime", async () => {
   assert.match(bundleBuilder, /Remove-Item -LiteralPath \(Join-Path \$inner "Start-Auto-Voucher\.bat"\)/);
   assert.match(bundleBuilder, /Bundle root must contain only/);
   assert.match(bundleBuilder, /exit 0\s*$/);
+  assert.match(sourceReleaseWorkflow, /Automatic environment button is missing/);
+  assert.match(sourceReleaseWorkflow, /Environment bootstrap did not reach ready state/);
+  assert.doesNotMatch(sourceReleaseWorkflow, /startup-status\.ps1/);
   assert.equal(packageJson.version, "0.2.5");
   assert.doesNotMatch(launcher, /AutoVoucher(?:Core|OCR|PDF|Setup).*\.exe/i);
 });
