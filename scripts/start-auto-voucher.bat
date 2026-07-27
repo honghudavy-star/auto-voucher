@@ -4,12 +4,10 @@ chcp 65001 >nul
 cd /d "%~dp0.."
 title Auto Voucher
 
-set "APP_VERSION=0.2.2"
 if not defined AUTO_VOUCHER_PORT set "AUTO_VOUCHER_PORT=8765"
 set "APP_URL=http://127.0.0.1:%AUTO_VOUCHER_PORT%/"
 set "VENV_DIR=%CD%\.venv"
 set "VENV_PYTHON=%VENV_DIR%\Scripts\python.exe"
-set "READY_FILE=%VENV_DIR%\.auto-voucher-%APP_VERSION%-ready"
 
 echo.
 echo Auto Voucher 正在启动，请不要关闭此窗口。
@@ -40,6 +38,16 @@ if not defined PYTHON_BOOTSTRAP if exist "%ProgramFiles%\Python312\python.exe" (
   set "PYTHON_BOOTSTRAP="%ProgramFiles%\Python312\python.exe""
 )
 if not defined PYTHON_BOOTSTRAP goto :missing_python
+
+if /I not "%AUTO_VOUCHER_SKIP_SOURCE_UPDATE%"=="1" (
+  echo [更新] 正在检查源码版本...
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%CD%\scripts\source-update.ps1" -Root "%CD%"
+  if errorlevel 1 echo [更新] 检查失败，将继续运行当前版本。
+)
+
+for /f %%V in ('node -p "require('./package.json').version" 2^>nul') do set "APP_VERSION=%%V"
+if not defined APP_VERSION goto :setup_failed
+set "READY_FILE=%VENV_DIR%\.auto-voucher-%APP_VERSION%-ready"
 
 if not exist "%VENV_PYTHON%" (
   echo [1/4] 正在创建本地 Python 环境...
