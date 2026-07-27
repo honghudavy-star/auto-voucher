@@ -25,7 +25,8 @@ $runtimeDirectory = Join-Path $Root ".auto-voucher-runtime"
 $toolsDirectory = Join-Path $Root ".auto-voucher-tools"
 $downloadsDirectory = Join-Path $runtimeDirectory "downloads"
 $statePath = Join-Path $runtimeDirectory "environment-state.json"
-$stateTemporaryPath = Join-Path $runtimeDirectory "environment-state.json.tmp"
+$stateTemporaryPath = Join-Path $runtimeDirectory "environment-state.$($PID).tmp"
+$stateBackupPath = Join-Path $runtimeDirectory "environment-state.$($PID).bak"
 $readyPath = Join-Path $runtimeDirectory "environment-ready"
 $environmentCommandPath = Join-Path $runtimeDirectory "environment.cmd"
 $serverPidPath = Join-Path $runtimeDirectory "environment-server.pid"
@@ -67,7 +68,25 @@ function Write-State {
         updatedAt = [DateTimeOffset]::UtcNow.ToString("o")
     }
     $payload | ConvertTo-Json -Compress | Set-Content -LiteralPath $stateTemporaryPath -Encoding UTF8
-    Move-Item -LiteralPath $stateTemporaryPath -Destination $statePath -Force
+    foreach ($attempt in 1..20) {
+        try {
+            if (Test-Path -LiteralPath $statePath) {
+                if (Test-Path -LiteralPath $stateBackupPath) {
+                    Remove-Item -LiteralPath $stateBackupPath -Force
+                }
+                [IO.File]::Replace($stateTemporaryPath, $statePath, $stateBackupPath)
+                Remove-Item -LiteralPath $stateBackupPath -Force -ErrorAction SilentlyContinue
+            } else {
+                [IO.File]::Move($stateTemporaryPath, $statePath)
+            }
+            return
+        } catch {
+            if ($attempt -eq 20) {
+                throw
+            }
+            Start-Sleep -Milliseconds 50
+        }
+    }
 }
 
 function Test-NodePath {
@@ -506,6 +525,12 @@ function Start-BootstrapServer {
         }
     } finally {
         $listener.Stop()
+        if (Test-Path -LiteralPath $stateTemporaryPath) {
+            Remove-Item -LiteralPath $stateTemporaryPath -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $stateBackupPath) {
+            Remove-Item -LiteralPath $stateBackupPath -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
