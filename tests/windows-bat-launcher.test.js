@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const launcherPath = new URL("../scripts/start-auto-voucher.bat", import.meta.url);
-const userEntryPath = new URL("../启动AutoVoucher.bat", import.meta.url);
+const userEntryPath = new URL("../Start-Auto-Voucher.bat", import.meta.url);
 const packagePath = new URL("../package.json", import.meta.url);
 
 test("Windows BAT launcher preserves the complete source runtime", async () => {
