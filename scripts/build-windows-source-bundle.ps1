@@ -43,13 +43,13 @@ try {
         "release",
         "test-data",
         "/XF",
-        ".DS_Store",
-        "Start-Auto-Voucher.bat"
+        ".DS_Store"
     )
     & robocopy @arguments | Out-Null
     if ($LASTEXITCODE -ge 8) {
         throw "Source bundle copy failed with Robocopy code $LASTEXITCODE"
     }
+    Remove-Item -LiteralPath (Join-Path $inner "Start-Auto-Voucher.bat") -Force
 
     if (Test-Path -LiteralPath $OutputPath) {
         Remove-Item -LiteralPath $OutputPath -Force
