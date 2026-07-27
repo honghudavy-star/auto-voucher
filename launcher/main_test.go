@@ -42,12 +42,29 @@ func TestSupportsWindowsVersion(t *testing.T) {
 	}
 }
 
-func TestRolloutIsDeterministic(t *testing.T) {
-	first := rolloutAllowed("device-1", 20)
-	for index := 0; index < 20; index++ {
-		if rolloutAllowed("device-1", 20) != first {
-			t.Fatal("rollout assignment changed")
-		}
+func TestValidateReleaseContract(t *testing.T) {
+	previousVersion := launcherVersion
+	previousURL := defaultManifestURL
+	previousContract := releaseContract
+	t.Cleanup(func() {
+		launcherVersion = previousVersion
+		defaultManifestURL = previousURL
+		releaseContract = previousContract
+	})
+
+	launcherVersion = "0.2.2"
+	defaultManifestURL = "https://updates.example.test/auto-voucher/stable/manifest.json"
+	releaseContract = strings.Join([]string{
+		launcherVersion,
+		defaultManifestURL,
+	}, "|")
+	if err := validateReleaseContract(); err != nil {
+		t.Fatalf("matching release contract was rejected: %v", err)
+	}
+
+	defaultManifestURL = "https://updates.example.test/auto-voucher/pilot/manifest.json"
+	if err := validateReleaseContract(); err == nil {
+		t.Fatal("non-stable manifest URL should be rejected")
 	}
 }
 
@@ -124,9 +141,9 @@ func TestValidateManifestRejectsUnsafeMetadata(t *testing.T) {
 	if err := validateManifest(manifest); err != nil {
 		t.Fatalf("valid manifest was rejected: %v", err)
 	}
-	manifest.RolloutPercentage = 101
+	manifest.Channel = "pilot"
 	if err := validateManifest(manifest); err == nil {
-		t.Fatal("rollout above 100 should be rejected")
+		t.Fatal("non-stable manifest should be rejected")
 	}
 	manifest = validManifest()
 	manifest.Core.URL = "http://updates.example.test/core.zip"
@@ -140,7 +157,7 @@ func TestValidateManifestRejectsUnsafeMetadata(t *testing.T) {
 	}
 }
 
-func TestFetchManifestRequiresValidSignatureAndChannel(t *testing.T) {
+func TestFetchManifestRequiresValidSignature(t *testing.T) {
 	privateKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{9}, ed25519.SeedSize))
 	manifest := validManifest()
 	body, err := json.Marshal(manifest)
@@ -175,9 +192,36 @@ func TestFetchManifestRequiresValidSignatureAndChannel(t *testing.T) {
 	if _, err := launcher.fetchManifest(context.Background()); err != nil {
 		t.Fatalf("signed manifest was rejected: %v", err)
 	}
-	launcher.state.Channel = "pilot"
-	if _, err := launcher.fetchManifest(context.Background()); err == nil {
-		t.Fatal("channel mismatch should be rejected")
+}
+
+func TestLegacyManifestFieldsRemainReadable(t *testing.T) {
+	payload := []byte(`{
+		"schemaVersion": 1,
+		"channel": "stable",
+		"version": "0.2.0",
+		"minimumVersion": "0.2.0",
+		"minimumLauncherVersion": "0.2.0",
+		"publishedAt": "2026-07-27T00:00:00Z",
+		"rolloutPercentage": 5,
+		"releaseNotes": "legacy",
+		"core": {
+			"url": "https://updates.example.test/core.zip",
+			"size": 100,
+			"expandedSize": 200,
+			"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"signature": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ==",
+			"entrypoint": "AutoVoucherCore.exe",
+			"entrypointSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"databaseVersion": 2
+		},
+		"components": {"ocr": {}}
+	}`)
+	var manifest Manifest
+	if err := json.Unmarshal(payload, &manifest); err != nil {
+		t.Fatalf("legacy schema v1 manifest should remain readable: %v", err)
+	}
+	if err := validateManifest(manifest); err != nil {
+		t.Fatalf("legacy compatibility fields should be ignored: %v", err)
 	}
 }
 
@@ -272,7 +316,6 @@ func TestBackgroundDownloadFailureBecomesRetryableError(t *testing.T) {
 			Status:           "downloading",
 			AvailableVersion: "0.2.2",
 			Progress:         60,
-			Components:       map[string]string{},
 		},
 	}
 	launcher.recordBackgroundDownloadFailure(context.DeadlineExceeded)
@@ -597,9 +640,7 @@ func validManifest() Manifest {
 		MinimumVersion:         "0.2.0",
 		MinimumLauncherVersion: "0.2.0",
 		PublishedAt:            time.Now().UTC().Format(time.RFC3339),
-		RolloutPercentage:      100,
 		ReleaseNotes:           "test",
 		Core:                   pkg,
-		Components:             map[string]Package{},
 	}
 }

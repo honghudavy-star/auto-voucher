@@ -556,8 +556,16 @@ def worker_command(worker: str, *arguments: str) -> list[str]:
     return [worker, *arguments]
 
 
+def resolve_worker(environment_name: str, executable_name: str) -> str:
+    configured = os.environ.get(environment_name, "").strip()
+    if configured:
+        return configured
+    bundled = Path(sys.executable).resolve().with_name(executable_name)
+    return str(bundled) if bundled.is_file() else ""
+
+
 def extract_pdf_text(content: bytes) -> str:
-    worker = os.environ.get("AUTO_VOUCHER_PDF_WORKER", "").strip()
+    worker = resolve_worker("AUTO_VOUCHER_PDF_WORKER", "AutoVoucherPDF.exe")
     if worker:
         with tempfile.TemporaryDirectory(prefix="auto-voucher-pdf-") as directory:
             source = Path(directory) / "source.pdf"
@@ -600,7 +608,7 @@ def extract_ocr_candidates(filename: str, content: bytes) -> dict[str, Any] | No
         source.write_bytes(content)
         image_path = source
         if suffix == ".pdf":
-            pdf_worker = os.environ.get("AUTO_VOUCHER_PDF_WORKER", "").strip()
+            pdf_worker = resolve_worker("AUTO_VOUCHER_PDF_WORKER", "AutoVoucherPDF.exe")
             image_path = root / "page.png"
             if pdf_worker:
                 result = subprocess.run(
@@ -625,7 +633,7 @@ def extract_ocr_candidates(filename: str, content: bytes) -> dict[str, Any] | No
                 if result.returncode != 0:
                     return None
                 image_path = prefix.with_suffix(".png")
-        worker = os.environ.get("AUTO_VOUCHER_OCR_WORKER", "").strip()
+        worker = resolve_worker("AUTO_VOUCHER_OCR_WORKER", "AutoVoucherOCR.exe")
         if worker:
             output_path = root / "ocr-result.json"
             result = subprocess.run(

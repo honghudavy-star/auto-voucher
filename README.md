@@ -4,13 +4,32 @@ Auto Voucher 是一个开源、本地优先的财务凭证自动化工作台。�
 
 数据默认保存在用户本机。系统只生成和保存凭证草稿，不自动提交、审核、过账或结账。
 
-## 下载
+## Windows 源码运行
 
-Windows 10 22H2 / Windows 11 x64 用户可下载轻量安装器：
+目前不再向新用户提供未签名的 EXE 安装包。Windows 用户可以直接下载公开源码：
 
-- [下载 Auto Voucher 稳定版](https://updates.iagent7.com/auto-voucher/stable/AutoVoucher-Setup-windows-x64.exe)
+- [下载 Auto Voucher 源码 ZIP](https://github.com/honghudavy-star/auto-voucher/archive/refs/heads/main.zip)
 
-当前安装器未使用 Authenticode 代码签名，Windows 可能显示“未知发布者”。请只从本仓库或上述官方地址下载，并在安装前核对 [GitHub Release](https://github.com/honghudavy-star/auto-voucher/releases) 中公布的 SHA-256。
+先安装 [Node.js 22](https://nodejs.org/en/download) 和 [Python 3.12](https://www.python.org/downloads/windows/)，然后：
+
+1. 解压下载的 ZIP；
+2. 打开解压后的 `auto-voucher-main` 根目录，不要进入 `src`、`backend` 或 `launcher`；
+3. 在文件夹空白处右键，选择“在终端中打开”；
+4. 在打开的 PowerShell 窗口中依次执行：
+
+```powershell
+npm install
+npm run build
+py -3.12 -m pip install -e .
+$env:PYTHONPATH = "backend"
+py -3.12 -m auto_voucher
+```
+
+首次运行会下载依赖。程序启动后会自动打开浏览器；如果没有自动打开，请访问：
+
+```text
+http://127.0.0.1:8765/
+```
 
 ## 主要功能
 
@@ -21,7 +40,7 @@ Windows 10 22H2 / Windows 11 x64 用户可下载轻量安装器：
 - 支持异常阻断、人工复核、操作审计和幂等回查；
 - 提供飞书审批，以及金蝶云星空、用友 U8、浪潮海岳 GS Cloud 适配器框架；
 - 支持 ERP API 直连或按客户模板导出；
-- 提供 Windows 轻量启动器、环境检测、自动更新和失败回退；
+- 历史 Windows 启动器代码保留用于已有版本维护，新用户通过源码运行；
 - 一键复制脱敏诊断信息，不自动上传业务数据。
 
 ## 工作流程
@@ -36,7 +55,7 @@ Windows 10 22H2 / Windows 11 x64 用户可下载轻量安装器：
 
 未完成测试上线门槛时，生产导出和推送保持禁用。
 
-## 本地开发
+## macOS / Linux 本地开发
 
 需要 Node.js 20+、Python 3.11+。
 
@@ -83,7 +102,7 @@ docs/         架构、诊断和发布文档
 - 文件上传不等于审批通过，审批、资料验证、财务复核和允许推送是独立状态；
 - 扫描件识别结果只作为候选数据，必须经过人工确认；
 - 密钥仅写入操作系统密钥库，不进入 SQLite、日志或备份；
-- Windows 正式发布采用未签名 EXE；仍要求更新清单签名、SHA-256 校验及干净 Windows 10/11 x64 环境验收。
+- 源码运行需要用户自行安装 Node.js 与 Python；现阶段不再将未签名 EXE 作为新用户下载入口。
 
 更多信息：
 

@@ -20,6 +20,7 @@ from typing import Any
 from .database import DATABASE_SCHEMA_VERSION, Database, utc_now
 from .diagnostics import app_version
 from .security import SecretStore, redact_data
+from .service import resolve_worker
 
 
 DEFAULT_PORTS = range(8766, 8786)
@@ -234,8 +235,18 @@ class EnvironmentService:
         checks.append(self._port_check())
         checks.append(self._keyring_check())
         checks.append(self._browser_check())
-        checks.append(self._optional_component("ocr", "OCR 组件", "rapidocr_onnxruntime"))
-        checks.append(self._optional_component("pdf", "PDF 文本组件", executable="pdftotext"))
+        checks.append(self._optional_component(
+            "ocr",
+            "OCR 组件",
+            "rapidocr_onnxruntime",
+            bundled_executable="AutoVoucherOCR.exe",
+        ))
+        checks.append(self._optional_component(
+            "pdf",
+            "PDF 文本组件",
+            executable="pdftotext",
+            bundled_executable="AutoVoucherPDF.exe",
+        ))
         checks.extend(self._network_checks(include_network))
         checks.extend(self._browser_capability_checks(browser_checks))
 
@@ -258,8 +269,6 @@ class EnvironmentService:
                 {"id": "clear-update-cache", "label": "清理未完成下载"},
                 {"id": "clear-staging", "label": "清理安装暂存区"},
                 {"id": "select-port", "label": "重新选择本地端口"},
-                {"id": "reinstall-ocr", "label": "重新安装 OCR 组件", "launcherRequired": True},
-                {"id": "reinstall-pdf", "label": "重新安装 PDF 组件", "launcherRequired": True},
                 {"id": "recreate-shortcut", "label": "重新创建桌面入口", "launcherRequired": True},
             ],
         }
@@ -332,7 +341,7 @@ class EnvironmentService:
             recommended = self._find_available_port()
             self.store.update(recommendedPort=recommended)
             return {"ok": True, "action": action, "restartRequired": True, "recommendedPort": recommended}
-        elif action in {"reinstall-ocr", "reinstall-pdf", "recreate-shortcut"}:
+        elif action == "recreate-shortcut":
             return {"ok": False, "action": action, "launcherRequired": True}
         else:
             raise ValueError("不允许执行该环境修复动作")
@@ -505,9 +514,10 @@ class EnvironmentService:
         name: str,
         module: str = "",
         executable: str = "",
+        bundled_executable: str = "",
     ) -> dict[str, Any]:
         worker_name = f"AUTO_VOUCHER_{check_id.upper()}_WORKER"
-        worker = os.environ.get(worker_name, "").strip()
+        worker = resolve_worker(worker_name, bundled_executable) if bundled_executable else ""
         available = (
             Path(worker).is_file()
             if worker
@@ -519,9 +529,9 @@ class EnvironmentService:
             f"component-{check_id}",
             name,
             "passed" if available else "warning",
-            "已安装" if available else "未安装",
-            "按需组件",
-            f"首次使用{name}时通过启动器下载安装。",
+            "应用包已包含" if available else "当前应用包缺失",
+            "随当前应用版本提供",
+            "重新安装当前版本的完整应用包。",
             blocking=False,
         )
 
@@ -590,16 +600,7 @@ class LauncherClient:
             }
 
     def command(self, action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        allowed = {
-            "check",
-            "download",
-            "apply",
-            "postpone",
-            "cleanup",
-            "reinstall-ocr",
-            "reinstall-pdf",
-            "recreate-shortcut",
-        }
+        allowed = {"check", "download", "apply", "postpone", "recreate-shortcut"}
         if action not in allowed:
             raise ValueError("不允许执行该启动器操作")
         if not self.endpoint or not self.token:
