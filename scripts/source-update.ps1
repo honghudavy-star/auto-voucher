@@ -57,6 +57,8 @@ try {
         "/XD",
         ".git",
         ".venv",
+        ".auto-voucher-runtime",
+        ".auto-voucher-tools",
         "node_modules",
         "dist",
         "test-data",

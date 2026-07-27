@@ -38,6 +38,7 @@ try {
         ".codegraph",
         ".venv",
         ".auto-voucher-runtime",
+        ".auto-voucher-tools",
         "node_modules",
         "dist",
         "release",

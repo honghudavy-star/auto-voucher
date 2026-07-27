@@ -1,6 +1,9 @@
 # Dependencies and build output
 node_modules/
 .venv/
+.auto-voucher-runtime/
+.auto-voucher-tools/
+.auto-voucher-source-version
 dist/
 .vite/
 coverage/
