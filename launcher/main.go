@@ -471,11 +471,7 @@ func (l *Launcher) install(manifest *Manifest) error {
 	if err := l.save(); err != nil {
 		return err
 	}
-	if err := l.pruneVersions(); err != nil {
-		return err
-	}
-	l.removeInstalledArchive(archive)
-	return nil
+	return l.pruneVersions()
 }
 
 func (l *Launcher) downloadPackage(ctx context.Context, pkg Package, destination string) error {
@@ -1162,105 +1158,6 @@ func (l *Launcher) pruneVersions() error {
 		versions = append(versions[:oldest], versions[oldest+1:]...)
 	}
 	return nil
-}
-
-func (l *Launcher) pruneComponentVersions(name, activeVersion string) error {
-	if name != "ocr" && name != "pdf" {
-		return fmt.Errorf("不支持清理组件：%s", name)
-	}
-	root := filepath.Join(l.dirs.Components, name)
-	entries, err := os.ReadDir(root)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() || entry.Name() == activeVersion {
-			continue
-		}
-		if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (l *Launcher) cleanupInstalledPackages() (int, int64, error) {
-	entries, err := os.ReadDir(l.dirs.Cache)
-	if errors.Is(err, os.ErrNotExist) {
-		entries = nil
-	} else if err != nil {
-		return 0, 0, err
-	}
-	removedFiles := 0
-	var freedBytes int64
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		installedPath := l.installedPathForCache(entry.Name())
-		if installedPath == "" {
-			continue
-		}
-		if info, statErr := os.Stat(installedPath); statErr != nil || info.IsDir() {
-			continue
-		}
-		cachePath := filepath.Join(l.dirs.Cache, entry.Name())
-		info, statErr := entry.Info()
-		if statErr != nil {
-			return removedFiles, freedBytes, statErr
-		}
-		if err := os.Remove(cachePath); err != nil {
-			return removedFiles, freedBytes, err
-		}
-		removedFiles++
-		freedBytes += info.Size()
-	}
-	for _, name := range []string{"ocr", "pdf"} {
-		if activeVersion := l.state.Components[name]; activeVersion != "" {
-			if err := l.pruneComponentVersions(name, activeVersion); err != nil {
-				return removedFiles, freedBytes, err
-			}
-		}
-	}
-	return removedFiles, freedBytes, nil
-}
-
-func (l *Launcher) installedPathForCache(name string) string {
-	const suffix = ".zip.part"
-	if !strings.HasSuffix(name, suffix) {
-		return ""
-	}
-	if strings.HasPrefix(name, "core-") {
-		version := strings.TrimSuffix(strings.TrimPrefix(name, "core-"), suffix)
-		if releaseVersionPattern.MatchString(version) {
-			return filepath.Join(l.dirs.Versions, version, "AutoVoucherCore.exe")
-		}
-		return ""
-	}
-	for _, component := range []string{"ocr", "pdf"} {
-		prefix := component + "-"
-		if !strings.HasPrefix(name, prefix) {
-			continue
-		}
-		version := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
-		if !releaseVersionPattern.MatchString(version) {
-			return ""
-		}
-		entrypoint := "AutoVoucher" + strings.ToUpper(component) + ".exe"
-		return filepath.Join(l.dirs.Components, component, version, entrypoint)
-	}
-	return ""
-}
-
-func (l *Launcher) removeInstalledArchive(path string) {
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		l.log("WARNING", "PACKAGE_CACHE_CLEANUP_FAILED", err.Error(), map[string]any{
-			"path": filepath.Base(path),
-		})
-	}
 }
 
 func (l *Launcher) writeError(writer http.ResponseWriter, code string, err error) {
