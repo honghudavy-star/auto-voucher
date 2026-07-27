@@ -51,6 +51,57 @@ func TestRolloutIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestConfiguredChannelUsesBuildChannel(t *testing.T) {
+	previousChannel := defaultChannel
+	t.Cleanup(func() { defaultChannel = previousChannel })
+
+	for _, channel := range []string{"pilot", "stable"} {
+		defaultChannel = channel
+		actual, err := configuredChannel()
+		if err != nil {
+			t.Fatalf("configured channel %q was rejected: %v", channel, err)
+		}
+		if actual != channel {
+			t.Fatalf("configured channel = %q, want %q", actual, channel)
+		}
+	}
+
+	defaultChannel = "preview"
+	if _, err := configuredChannel(); err == nil {
+		t.Fatal("unsupported configured channel should be rejected")
+	}
+}
+
+func TestValidateReleaseContract(t *testing.T) {
+	previousVersion := launcherVersion
+	previousChannel := defaultChannel
+	previousURL := defaultManifestURL
+	previousContract := releaseContract
+	t.Cleanup(func() {
+		launcherVersion = previousVersion
+		defaultChannel = previousChannel
+		defaultManifestURL = previousURL
+		releaseContract = previousContract
+	})
+
+	launcherVersion = "0.2.2"
+	defaultChannel = "pilot"
+	defaultManifestURL = "https://updates.example.test/auto-voucher/pilot/manifest.json"
+	releaseContract = strings.Join([]string{
+		launcherVersion,
+		defaultChannel,
+		defaultManifestURL,
+	}, "|")
+	if err := validateReleaseContract(); err != nil {
+		t.Fatalf("matching release contract was rejected: %v", err)
+	}
+
+	defaultChannel = "stable"
+	if err := validateReleaseContract(); err == nil {
+		t.Fatal("mismatched release contract should be rejected")
+	}
+}
+
 func TestSafeExtractRejectsTraversal(t *testing.T) {
 	root := t.TempDir()
 	archivePath := filepath.Join(root, "unsafe.zip")

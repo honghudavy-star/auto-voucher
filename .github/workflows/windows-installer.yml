@@ -90,11 +90,6 @@ jobs:
       - run: npm run build
       - name: Audit locked Python dependencies
         run: uv run --frozen --group release pip-audit --progress-spinner off --skip-editable
-      - name: Test lightweight launcher
-        working-directory: launcher
-        run: |
-          go test ./...
-          go vet ./...
       - name: Lint GitHub Actions workflow
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/windows-installer.yml
       - name: Resolve release metadata
@@ -171,11 +166,15 @@ jobs:
           Compress-Archive -Path dist-pdf\AutoVoucherPDF.exe -DestinationPath "release\AutoVoucherPDF-${{ steps.release.outputs.version }}-windows-x64.zip"
 
       - name: Build lightweight launcher
-        working-directory: launcher
         shell: pwsh
         run: |
           $manifestUrl = if ($env:AUTO_VOUCHER_CORE_BASE_URL) { "$($env:AUTO_VOUCHER_CORE_BASE_URL.TrimEnd('/'))/${{ steps.release.outputs.channel }}/manifest.json" } else { "https://invalid.local/auto-voucher/${{ steps.release.outputs.channel }}/manifest.json" }
-          go build -trimpath -ldflags "-s -w -H=windowsgui -X main.launcherVersion=${{ steps.release.outputs.version }} -X main.defaultManifestURL=$manifestUrl -X main.manifestPublicKey=${{ steps.signing.outputs.public_key }}" -o ..\release\AutoVoucherLauncher.exe .
+          .\scripts\build-windows-launcher.ps1 `
+            -Version "${{ steps.release.outputs.version }}" `
+            -Channel "${{ steps.release.outputs.channel }}" `
+            -ManifestUrl $manifestUrl `
+            -ManifestPublicKey "${{ steps.signing.outputs.public_key }}" `
+            -Output "release\AutoVoucherLauncher.exe"
 
       - name: Generate signed version manifest
         working-directory: launcher

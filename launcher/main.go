@@ -29,6 +29,8 @@ import (
 var (
 	launcherVersion    = "0.1.0-dev"
 	defaultManifestURL = ""
+	defaultChannel     = "stable"
+	releaseContract    = "0.1.0-dev|stable|"
 	manifestPublicKey  = ""
 )
 
@@ -105,6 +107,9 @@ func main() {
 	if runtime.GOARCH != "amd64" {
 		failUser("当前启动器首期只支持 Windows x64，不支持 ARM64。", nil)
 	}
+	if err := validateReleaseContract(); err != nil {
+		failUser("启动器发布元数据无效。", err)
+	}
 	if err := checkSupportedWindows(); err != nil {
 		failUser("当前 Windows 版本不受支持。", err)
 	}
@@ -143,7 +148,10 @@ func main() {
 		launcher.state.DeviceID = randomToken()
 	}
 	if launcher.state.Channel == "" {
-		launcher.state.Channel = "stable"
+		launcher.state.Channel, err = configuredChannel()
+		if err != nil {
+			failUser("启动器发布通道配置无效。", err)
+		}
 	}
 	if launcher.state.Components == nil {
 		launcher.state.Components = map[string]string{}
@@ -242,6 +250,26 @@ func (l *Launcher) manifestURL() string {
 		return value
 	}
 	return strings.TrimSpace(defaultManifestURL)
+}
+
+func configuredChannel() (string, error) {
+	channel := strings.TrimSpace(defaultChannel)
+	if channel != "pilot" && channel != "stable" {
+		return "", fmt.Errorf("启动器发布通道必须为 pilot 或 stable，当前为 %q", channel)
+	}
+	return channel, nil
+}
+
+func validateReleaseContract() error {
+	expected := strings.Join([]string{
+		strings.TrimSpace(launcherVersion),
+		strings.TrimSpace(defaultChannel),
+		strings.TrimSpace(defaultManifestURL),
+	}, "|")
+	if releaseContract != expected {
+		return fmt.Errorf("启动器发布元数据不一致")
+	}
+	return nil
 }
 
 func (l *Launcher) fetchManifest(ctx context.Context) (*Manifest, error) {
