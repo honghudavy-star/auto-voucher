@@ -14,7 +14,7 @@ Auto Voucher 是一个开源、本地优先的财务凭证自动化工作台。�
 
 1. 解压下载的 ZIP；
 2. 打开解压后的 `auto-voucher-main` 根目录，不要进入 `src`、`backend` 或 `launcher`；
-3. 双击根目录里的 **`启动 Auto Voucher.bat`**。
+3. 双击根目录里的 **`启动AutoVoucher.bat`**。
 
 BAT 首次运行会创建项目专用环境，并安装 Core、OCR、PDF 全部组件；后续运行会直接复用。程序启动后会自动打开浏览器；如果没有自动打开，请访问：
 
