@@ -18,6 +18,7 @@ test("Windows BAT launcher preserves the complete source runtime", async () => {
   assert.match(launcher, /call npm run build/);
   assert.match(launcher, /"%VENV_PYTHON%" -m auto_voucher/);
   assert.match(launcher, /AUTO_VOUCHER_NO_BROWSER/);
+  assert.match(launcher, /AUTO_VOUCHER_PORT/);
   assert.doesNotMatch(launcher, /AutoVoucher(?:Core|OCR|PDF|Setup).*\.exe/i);
   assert.doesNotMatch(launcher, /powershell|executionpolicy/i);
 });

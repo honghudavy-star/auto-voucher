@@ -5,7 +5,8 @@ cd /d "%~dp0"
 title Auto Voucher
 
 set "APP_VERSION=0.2.2"
-set "APP_URL=http://127.0.0.1:8765/"
+if not defined AUTO_VOUCHER_PORT set "AUTO_VOUCHER_PORT=8765"
+set "APP_URL=http://127.0.0.1:%AUTO_VOUCHER_PORT%/"
 set "VENV_DIR=%CD%\.venv"
 set "VENV_PYTHON=%VENV_DIR%\Scripts\python.exe"
 set "READY_FILE=%VENV_DIR%\.auto-voucher-%APP_VERSION%-ready"
