@@ -6,17 +6,17 @@ Auto Voucher 是一个开源、本地优先的财务凭证自动化工作台。�
 
 ## Windows 源码运行
 
-目前不再向新用户提供未签名的 EXE 安装包。Windows 用户可以直接下载公开源码：
+目前不再向新用户提供未签名的 EXE 安装包。Windows 用户下载专用源码包即可：
 
-- [下载 Auto Voucher 源码 ZIP](https://github.com/honghudavy-star/auto-voucher/archive/refs/heads/main.zip)
+- [下载 Auto Voucher Windows 源码包](https://github.com/honghudavy-star/auto-voucher/releases/latest/download/Auto-Voucher-Windows.zip)
 
-先安装 [Node.js 22](https://nodejs.org/en/download) 和 [Python 3.12](https://www.python.org/downloads/windows/)，然后：
+使用方式：
 
 1. 解压下载的 ZIP；
-2. 打开解压后的 `auto-voucher-main` 根目录，不要进入 `src`、`backend` 或 `launcher`；
-3. 双击根目录里的 **`Start-Auto-Voucher.bat`**。
+2. 最外层只有 **`Start-Auto-Voucher.bat`** 和内部程序文件夹；
+3. 双击 **`Start-Auto-Voucher.bat`**，浏览器会立即打开本地环境检测页面。
 
-BAT 每次启动会先通过 GitHub 检查更高的源码版本；更新失败时继续运行当前版本，不影响离线启动。首次运行会创建项目专用环境，并安装 Core、OCR、PDF 全部组件；后续运行会直接复用。程序启动后会自动打开浏览器；如果没有自动打开，请访问：
+检测页会明确显示 Node.js 与 Python 是否就绪；缺少组件时提供官方下载入口。环境满足后，BAT 才会开始创建项目专用环境，并安装 Core、OCR、PDF 全部组件。后续运行会直接复用。BAT 每次启动也会检查更高的源码版本；更新失败时继续运行当前版本，不影响离线启动。程序准备完成后会自动进入工作台；如果没有自动进入，请访问：
 
 ```text
 http://127.0.0.1:8765/
