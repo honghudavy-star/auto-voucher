@@ -69,6 +69,8 @@ test("Windows BAT launcher preserves the complete source runtime", async () => {
   assert.match(bundleBuilder, /exit 0\s*$/);
   assert.match(sourceReleaseWorkflow, /Automatic environment button is missing/);
   assert.match(sourceReleaseWorkflow, /Environment bootstrap did not reach ready state/);
+  assert.match(sourceReleaseWorkflow, /environment-server\.pid/);
+  assert.doesNotMatch(sourceReleaseWorkflow, /Stop-Job/);
   assert.doesNotMatch(sourceReleaseWorkflow, /startup-status\.ps1/);
   assert.equal(packageJson.version, "0.2.5");
   assert.doesNotMatch(launcher, /AutoVoucher(?:Core|OCR|PDF|Setup).*\.exe/i);
