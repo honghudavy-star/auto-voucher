@@ -49,6 +49,7 @@ test("Windows BAT launcher preserves the complete source runtime", async () => {
   assert.match(environmentBootstrap, /id="action"/);
   assert.match(environmentBootstrap, /\/api\/install/);
   assert.match(environmentBootstrap, /\/api\/status/);
+  assert.match(environmentBootstrap, /ExitWhenTerminal/);
   assert.match(environmentBootstrap, /Install-LocalNode/);
   assert.match(environmentBootstrap, /Install-LocalPython/);
   assert.match(environmentBootstrap, /UV_PYTHON_INSTALL_DIR/);
@@ -69,7 +70,7 @@ test("Windows BAT launcher preserves the complete source runtime", async () => {
   assert.match(bundleBuilder, /exit 0\s*$/);
   assert.match(sourceReleaseWorkflow, /Automatic environment button is missing/);
   assert.match(sourceReleaseWorkflow, /Environment bootstrap did not reach ready state/);
-  assert.match(sourceReleaseWorkflow, /environment-server\.pid/);
+  assert.match(sourceReleaseWorkflow, /-ExitWhenTerminal/);
   assert.doesNotMatch(sourceReleaseWorkflow, /Stop-Job/);
   assert.doesNotMatch(sourceReleaseWorkflow, /startup-status\.ps1/);
   assert.equal(packageJson.version, "0.2.5");
