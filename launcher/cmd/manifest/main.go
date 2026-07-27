@@ -45,15 +45,9 @@ type Manifest struct {
 func main() {
 	var (
 		version                = flag.String("version", "", "release version")
-		channel                = flag.String("channel", "stable", "release channel")
-		core                   = flag.String("core", "", "core zip")
-		coreURL                = flag.String("core-url", "", "HTTPS core URL")
-		ocr                    = flag.String("ocr", "", "optional OCR zip")
-		ocrURL                 = flag.String("ocr-url", "", "optional OCR URL")
-		pdf                    = flag.String("pdf", "", "optional PDF zip")
-		pdfURL                 = flag.String("pdf-url", "", "optional PDF URL")
+		application            = flag.String("application", "", "complete application zip")
+		applicationURL         = flag.String("application-url", "", "HTTPS application URL")
 		output                 = flag.String("output", "release/manifest.json", "manifest output")
-		rollout                = flag.Int("rollout", 5, "rollout percentage")
 		notes                  = flag.String("notes", "", "release notes")
 		minimumVersion         = flag.String("minimum-version", "0.2.0", "minimum allowed core version")
 		minimumLauncherVersion = flag.String("minimum-launcher-version", "0.2.0", "minimum launcher version")
@@ -62,10 +56,8 @@ func main() {
 	flag.Parse()
 	must(validateReleaseMetadata(
 		*version,
-		*channel,
 		*minimumVersion,
 		*minimumLauncherVersion,
-		*rollout,
 		*databaseVersion,
 	))
 	encodedKey := os.Getenv("AUTO_VOUCHER_RELEASE_PRIVATE_KEY")
@@ -76,9 +68,9 @@ func main() {
 	}
 	privateKey, err := signingKey(encodedKey)
 	must(err)
-	corePackage, err := packageInfo(
-		*core,
-		*coreURL,
+	applicationPackage, err := packageInfo(
+		*application,
+		*applicationURL,
 		"AutoVoucherCore.exe",
 		*databaseVersion,
 		privateKey,
@@ -86,35 +78,17 @@ func main() {
 	must(err)
 	manifest := Manifest{
 		SchemaVersion:          1,
-		Channel:                *channel,
+		Channel:                "stable",
 		Version:                *version,
 		MinimumVersion:         *minimumVersion,
 		MinimumLauncherVersion: *minimumLauncherVersion,
 		PublishedAt:            time.Now().UTC().Format(time.RFC3339),
-		RolloutPercentage:      *rollout,
-		ReleaseNotes:           *notes,
-		Core:                   corePackage,
-		Components:             map[string]Package{},
-	}
-	if *ocr != "" {
-		manifest.Components["ocr"], err = packageInfo(
-			*ocr,
-			*ocrURL,
-			"AutoVoucherOCR.exe",
-			*databaseVersion,
-			privateKey,
-		)
-		must(err)
-	}
-	if *pdf != "" {
-		manifest.Components["pdf"], err = packageInfo(
-			*pdf,
-			*pdfURL,
-			"AutoVoucherPDF.exe",
-			*databaseVersion,
-			privateKey,
-		)
-		must(err)
+		// These two fields remain in schema v1 only so installed 0.2.x
+		// launchers can consume the new single application bundle.
+		RolloutPercentage: 100,
+		ReleaseNotes:      *notes,
+		Core:              applicationPackage,
+		Components:        map[string]Package{},
 	}
 	payload, err := json.MarshalIndent(manifest, "", "  ")
 	must(err)
@@ -148,6 +122,11 @@ func packageInfo(
 	if err != nil {
 		return Package{}, err
 	}
+	for _, bundledEntrypoint := range []string{"AutoVoucherOCR.exe", "AutoVoucherPDF.exe"} {
+		if _, err := zipEntrypointDigest(path, bundledEntrypoint); err != nil {
+			return Package{}, fmt.Errorf("complete application package: %w", err)
+		}
+	}
 	return Package{
 		URL:              url,
 		Size:             int64(len(body)),
@@ -163,12 +142,9 @@ func packageInfo(
 var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$`)
 
 func validateReleaseMetadata(
-	version, channel, minimumVersion, minimumLauncherVersion string,
-	rollout, databaseVersion int,
+	version, minimumVersion, minimumLauncherVersion string,
+	databaseVersion int,
 ) error {
-	if channel != "pilot" && channel != "stable" {
-		return fmt.Errorf("channel must be pilot or stable")
-	}
 	for name, value := range map[string]string{
 		"version":                  version,
 		"minimum-version":          minimumVersion,
@@ -177,9 +153,6 @@ func validateReleaseMetadata(
 		if !versionPattern.MatchString(value) {
 			return fmt.Errorf("%s must be a semantic version", name)
 		}
-	}
-	if rollout < 0 || rollout > 100 {
-		return fmt.Errorf("rollout must be between 0 and 100")
 	}
 	if compareReleaseVersions(minimumVersion, version) > 0 {
 		return fmt.Errorf("minimum-version cannot be newer than version")

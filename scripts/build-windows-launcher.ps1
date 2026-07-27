@@ -5,10 +5,6 @@ param(
     [string]$Version,
 
     [Parameter(Mandatory = $true)]
-    [ValidateSet('pilot', 'stable')]
-    [string]$Channel,
-
-    [Parameter(Mandatory = $true)]
     [ValidatePattern('^https://')]
     [string]$ManifestUrl,
 
@@ -42,7 +38,7 @@ if ($Version -ne $packageVersion -or $Version -ne $pyprojectVersion) {
 }
 
 $manifestUri = [uri]$ManifestUrl
-$expectedManifestSuffix = "/$Channel/manifest.json"
+$expectedManifestSuffix = "/stable/manifest.json"
 if ($manifestUri.AbsolutePath -notlike "*$expectedManifestSuffix") {
     throw "Manifest URL path must end with $expectedManifestSuffix"
 }
@@ -75,8 +71,7 @@ try {
         '-H=windowsgui'
         "-X main.launcherVersion=$Version"
         "-X main.defaultManifestURL=$ManifestUrl"
-        "-X main.defaultChannel=$Channel"
-        "-X main.releaseContract=$Version|$Channel|$ManifestUrl"
+        "-X main.releaseContract=$Version|$ManifestUrl"
         "-X main.manifestPublicKey=$ManifestPublicKey"
     ) -join ' '
 
@@ -107,7 +102,7 @@ $binaryText = [System.Text.Encoding]::ASCII.GetString(
     [System.IO.File]::ReadAllBytes($outputPath)
 )
 foreach ($requiredValue in @(
-    "$Version|$Channel|$ManifestUrl",
+    "$Version|$ManifestUrl",
     $ManifestPublicKey
 )) {
     if (-not $binaryText.Contains($requiredValue)) {

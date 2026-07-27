@@ -339,14 +339,7 @@ class DiagnosticLogger:
             f"生成时间：{utc_now()}",
             f"程序版本：{app_version()}",
             f"启动器版本：{runtime.get('launcherVersion') or '未连接'}",
-            "按需组件："
-            + (
-                "、".join(
-                    f"{name} {component_version}"
-                    for name, component_version in (update.get("components") or {}).items()
-                )
-                or "尚未通过启动器安装"
-            ),
+            "内置能力：OCR、PDF（随应用版本提供）",
             f"系统：{platform.system()} {platform.release()} {platform.machine()}",
             f"本地服务：{'运行中' if runtime.get('serviceHealthy') else '异常'}",
             f"数据库状态：{runtime.get('databaseStatus') or '未知'}",

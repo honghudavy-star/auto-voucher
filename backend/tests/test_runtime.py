@@ -91,6 +91,33 @@ class RuntimeTests(unittest.TestCase):
                 "action",
             }
             self.assertTrue(required_fields.issubset(result["checks"][0]))
+            repair_ids = {item["id"] for item in result["repairActions"]}
+            self.assertNotIn("reinstall-ocr", repair_ids)
+            self.assertNotIn("reinstall-pdf", repair_ids)
+
+    def test_environment_check_accepts_workers_from_complete_bundle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ocr_worker = root / "AutoVoucherOCR.exe"
+            pdf_worker = root / "AutoVoucherPDF.exe"
+            ocr_worker.write_bytes(b"ocr")
+            pdf_worker.write_bytes(b"pdf")
+            service = self.make_service(directory)
+
+            def bundled_worker(_environment_name, executable_name):
+                return str(root / executable_name)
+
+            with (
+                patch("auto_voucher.runtime.platform.system", return_value="Windows"),
+                patch("auto_voucher.runtime.platform.release", return_value="11"),
+                patch("auto_voucher.runtime.platform.machine", return_value="AMD64"),
+                patch("auto_voucher.runtime.resolve_worker", side_effect=bundled_worker),
+            ):
+                result = service.check(include_network=False)
+
+            checks = {item["id"]: item for item in result["checks"]}
+            self.assertEqual(checks["component-ocr"]["status"], "passed")
+            self.assertEqual(checks["component-pdf"]["status"], "passed")
 
     def test_credential_manager_failure_degrades_but_blocks_production(self):
         with tempfile.TemporaryDirectory() as directory:

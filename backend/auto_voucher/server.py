@@ -456,7 +456,7 @@ def make_handler(
                 elif path == "/api/environment/repair":
                     payload = self.read_json()
                     action = str(payload.get("action") or "")
-                    if action in {"reinstall-ocr", "reinstall-pdf", "recreate-shortcut"}:
+                    if action == "recreate-shortcut":
                         self.json_response(launcher_client.command(action))
                     else:
                         self.json_response(environment_service.repair(action))

@@ -1,18 +1,10 @@
-name: Windows launcher candidate
+name: Windows release
 
 on:
   workflow_dispatch:
     inputs:
-      channel:
-        description: Release channel
-        type: choice
-        options: [pilot, stable]
-        default: pilot
-      rollout:
-        description: Rollout percentage
-        default: "5"
       minimumVersion:
-        description: Minimum allowed core version
+        description: Minimum allowed application version
         default: "0.2.0"
       minimumLauncherVersion:
         description: Minimum allowed launcher version
@@ -26,7 +18,7 @@ on:
       - "v*"
 
 concurrency:
-  group: auto-voucher-windows-${{ inputs.channel || 'stable' }}
+  group: auto-voucher-windows-stable
   cancel-in-progress: false
 
 jobs:
@@ -97,13 +89,6 @@ jobs:
         shell: pwsh
         run: |
           $version = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"$').Matches[0].Groups[1].Value
-          $channel = if ("${{ inputs.channel }}") { "${{ inputs.channel }}" } else { "stable" }
-          $rollout = if ("${{ inputs.rollout }}") { "${{ inputs.rollout }}" } else { "5" }
-          if ($channel -notin @("pilot", "stable")) { throw "Channel must be pilot or stable" }
-          $rolloutNumber = 0
-          if (-not [int]::TryParse($rollout, [ref]$rolloutNumber) -or $rolloutNumber -lt 0 -or $rolloutNumber -gt 100) {
-            throw "Rollout must be an integer between 0 and 100"
-          }
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
             if ($tagVersion -ne $version) { throw "Tag $($env:GITHUB_REF_NAME) does not match project version $version" }
@@ -111,8 +96,6 @@ jobs:
             if ($env:GITHUB_SHA -ne $mainSha) { throw "Release tag must point to the current origin/main commit" }
           }
           "version=$version" >> $env:GITHUB_OUTPUT
-          "channel=$channel" >> $env:GITHUB_OUTPUT
-          "rollout=$rolloutNumber" >> $env:GITHUB_OUTPUT
           $minimumVersion = if ("${{ inputs.minimumVersion }}") { "${{ inputs.minimumVersion }}" } else { $version }
           if ([version]$minimumVersion -gt [version]$version) { throw "minimumVersion cannot be newer than release version" }
           "minimum_version=$minimumVersion" >> $env:GITHUB_OUTPUT
@@ -146,10 +129,10 @@ jobs:
           $publicPath = ([uri]$env:AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL).AbsolutePath.Trim("/")
           if ($publicPath -ne $prefix) { throw "Public update URL path must match AUTO_VOUCHER_R2_PREFIX" }
 
-      - name: Build core without optional OCR
+      - name: Build application executables
         run: uv run --frozen --group release pyinstaller --distpath dist-pyinstaller --workpath build-pyinstaller --noconfirm packaging/auto-voucher.spec
 
-      - name: Build optional OCR and PDF components
+      - name: Build bundled OCR and PDF workers
         shell: pwsh
         run: |
           uv sync --frozen --all-extras --group release
@@ -157,21 +140,26 @@ jobs:
           uv run --frozen --all-extras --group release pyinstaller --distpath dist-ocr --workpath build-ocr --noconfirm packaging/auto-voucher-ocr.spec
           uv run --frozen --all-extras --group release pyinstaller --distpath dist-pdf --workpath build-pdf --noconfirm packaging/auto-voucher-pdf.spec
 
-      - name: Package versioned components
+      - name: Package one complete application bundle
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
-          Compress-Archive -Path dist-pyinstaller\AutoVoucherCore.exe -DestinationPath "release\AutoVoucherCore-${{ steps.release.outputs.version }}-windows-x64.zip"
-          Compress-Archive -Path dist-ocr\AutoVoucherOCR.exe -DestinationPath "release\AutoVoucherOCR-${{ steps.release.outputs.version }}-windows-x64.zip"
-          Compress-Archive -Path dist-pdf\AutoVoucherPDF.exe -DestinationPath "release\AutoVoucherPDF-${{ steps.release.outputs.version }}-windows-x64.zip"
+          $bundle = "release\application"
+          New-Item -ItemType Directory -Force $bundle | Out-Null
+          Copy-Item dist-pyinstaller\AutoVoucherCore.exe $bundle
+          Copy-Item dist-ocr\AutoVoucherOCR.exe $bundle
+          Copy-Item dist-pdf\AutoVoucherPDF.exe $bundle
+          $expected = @("AutoVoucherCore.exe", "AutoVoucherOCR.exe", "AutoVoucherPDF.exe")
+          $actual = @(Get-ChildItem $bundle -File | Select-Object -ExpandProperty Name | Sort-Object)
+          if (Compare-Object ($expected | Sort-Object) $actual) { throw "Application bundle contents do not match the release contract" }
+          Compress-Archive -Path "$bundle\*" -DestinationPath "release\AutoVoucherApp-${{ steps.release.outputs.version }}-windows-x64.zip"
 
       - name: Build lightweight launcher
         shell: pwsh
         run: |
-          $manifestUrl = if ($env:AUTO_VOUCHER_CORE_BASE_URL) { "$($env:AUTO_VOUCHER_CORE_BASE_URL.TrimEnd('/'))/${{ steps.release.outputs.channel }}/manifest.json" } else { "https://invalid.local/auto-voucher/${{ steps.release.outputs.channel }}/manifest.json" }
+          $manifestUrl = if ($env:AUTO_VOUCHER_CORE_BASE_URL) { "$($env:AUTO_VOUCHER_CORE_BASE_URL.TrimEnd('/'))/stable/manifest.json" } else { "https://invalid.local/auto-voucher/stable/manifest.json" }
           .\scripts\build-windows-launcher.ps1 `
             -Version "${{ steps.release.outputs.version }}" `
-            -Channel "${{ steps.release.outputs.channel }}" `
             -ManifestUrl $manifestUrl `
             -ManifestPublicKey "${{ steps.signing.outputs.public_key }}" `
             -Output "release\AutoVoucherLauncher.exe"
@@ -185,18 +173,12 @@ jobs:
           $base = if ($env:AUTO_VOUCHER_CORE_BASE_URL) { $env:AUTO_VOUCHER_CORE_BASE_URL.TrimEnd('/') } else { "https://invalid.local/auto-voucher" }
           go run ./cmd/manifest `
             -version "${{ steps.release.outputs.version }}" `
-            -channel "${{ steps.release.outputs.channel }}" `
-            -rollout "${{ steps.release.outputs.rollout }}" `
             -minimum-version "${{ steps.release.outputs.minimum_version }}" `
             -minimum-launcher-version "${{ steps.release.outputs.minimum_launcher_version }}" `
             -database-version "${{ steps.release.outputs.database_version }}" `
             -notes "在线轻量启动、环境检测、自动更新与一键诊断" `
-            -core "..\release\AutoVoucherCore-${{ steps.release.outputs.version }}-windows-x64.zip" `
-            -core-url "$base/${{ steps.release.outputs.channel }}/AutoVoucherCore-${{ steps.release.outputs.version }}-windows-x64.zip" `
-            -ocr "..\release\AutoVoucherOCR-${{ steps.release.outputs.version }}-windows-x64.zip" `
-            -ocr-url "$base/${{ steps.release.outputs.channel }}/AutoVoucherOCR-${{ steps.release.outputs.version }}-windows-x64.zip" `
-            -pdf "..\release\AutoVoucherPDF-${{ steps.release.outputs.version }}-windows-x64.zip" `
-            -pdf-url "$base/${{ steps.release.outputs.channel }}/AutoVoucherPDF-${{ steps.release.outputs.version }}-windows-x64.zip" `
+            -application "..\release\AutoVoucherApp-${{ steps.release.outputs.version }}-windows-x64.zip" `
+            -application-url "$base/stable/AutoVoucherApp-${{ steps.release.outputs.version }}-windows-x64.zip" `
             -output "..\release\manifest.json"
 
       - name: Build per-user bootstrap installer
@@ -216,22 +198,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "AWS CLI v2 is required on the release runner" }
           $endpoint = "https://$env:CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com"
           $prefix = $env:AUTO_VOUCHER_R2_PREFIX.Trim("/")
-          $channel = "${{ steps.release.outputs.channel }}"
           $version = "${{ steps.release.outputs.version }}"
           $setup = (Get-ChildItem "release\AutoVoucher-Setup-$version-windows-x64.exe" | Select-Object -First 1).FullName
           foreach ($item in @(
-            @{ key="$prefix/$channel/AutoVoucherCore-$version-windows-x64.zip"; file="release\AutoVoucherCore-$version-windows-x64.zip"; type="application/zip"; cache="public, max-age=31536000, immutable" },
-            @{ key="$prefix/$channel/AutoVoucherOCR-$version-windows-x64.zip"; file="release\AutoVoucherOCR-$version-windows-x64.zip"; type="application/zip"; cache="public, max-age=31536000, immutable" },
-            @{ key="$prefix/$channel/AutoVoucherPDF-$version-windows-x64.zip"; file="release\AutoVoucherPDF-$version-windows-x64.zip"; type="application/zip"; cache="public, max-age=31536000, immutable" },
-            @{ key="$prefix/$channel/AutoVoucherLauncher-$version-windows-x64.exe"; file="release\AutoVoucherLauncher.exe"; type="application/vnd.microsoft.portable-executable"; cache="public, max-age=31536000, immutable" },
-            @{ key="$prefix/$channel/AutoVoucher-Setup-$version-windows-x64.exe"; file=$setup; type="application/vnd.microsoft.portable-executable"; cache="public, max-age=31536000, immutable" },
-            @{ key="$prefix/$channel/manifest.json.sig"; file="release\manifest.json.sig"; type="text/plain"; cache="no-store" }
+            @{ key="$prefix/stable/AutoVoucherApp-$version-windows-x64.zip"; file="release\AutoVoucherApp-$version-windows-x64.zip"; type="application/zip"; cache="public, max-age=31536000, immutable" },
+            @{ key="$prefix/stable/AutoVoucherLauncher-$version-windows-x64.exe"; file="release\AutoVoucherLauncher.exe"; type="application/vnd.microsoft.portable-executable"; cache="public, max-age=31536000, immutable" },
+            @{ key="$prefix/stable/AutoVoucher-Setup-$version-windows-x64.exe"; file=$setup; type="application/vnd.microsoft.portable-executable"; cache="public, max-age=31536000, immutable" },
+            @{ key="$prefix/stable/manifest.json.sig"; file="release\manifest.json.sig"; type="text/plain"; cache="no-store" }
           )) {
             aws s3api put-object --no-cli-pager --endpoint-url $endpoint --bucket $env:AUTO_VOUCHER_R2_BUCKET --key $item.key --body $item.file --content-type $item.type --cache-control $item.cache
             if ($LASTEXITCODE -ne 0) { throw "R2 upload failed for $($item.key)" }
           }
           # Publish the signed manifest last so clients never observe references to missing packages.
-          aws s3api put-object --no-cli-pager --endpoint-url $endpoint --bucket $env:AUTO_VOUCHER_R2_BUCKET --key "$prefix/$channel/manifest.json" --body "release\manifest.json" --content-type "application/json" --cache-control "no-store"
+          aws s3api put-object --no-cli-pager --endpoint-url $endpoint --bucket $env:AUTO_VOUCHER_R2_BUCKET --key "$prefix/stable/manifest.json" --body "release\manifest.json" --content-type "application/json" --cache-control "no-store"
           if ($LASTEXITCODE -ne 0) { throw "R2 manifest upload failed" }
 
       - name: Read back published manifest and package metadata
@@ -239,20 +218,17 @@ jobs:
         shell: pwsh
         run: |
           $base = $env:AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL.TrimEnd('/')
-          $channel = "${{ steps.release.outputs.channel }}"
-          $remoteManifest = (Invoke-WebRequest -UseBasicParsing "$base/$channel/manifest.json").Content
+          $remoteManifest = (Invoke-WebRequest -UseBasicParsing "$base/stable/manifest.json").Content
           $localManifest = Get-Content "release\manifest.json" -Raw
           if ($remoteManifest.Trim() -ne $localManifest.Trim()) { throw "Published manifest readback differs from signed local manifest" }
           foreach ($file in @(
-            "AutoVoucherCore-${{ steps.release.outputs.version }}-windows-x64.zip",
-            "AutoVoucherOCR-${{ steps.release.outputs.version }}-windows-x64.zip",
-            "AutoVoucherPDF-${{ steps.release.outputs.version }}-windows-x64.zip",
+            "AutoVoucherApp-${{ steps.release.outputs.version }}-windows-x64.zip",
             "AutoVoucherLauncher-${{ steps.release.outputs.version }}-windows-x64.exe",
             "AutoVoucher-Setup-${{ steps.release.outputs.version }}-windows-x64.exe"
           )) {
             $localFile = if ($file.StartsWith("AutoVoucherLauncher-")) { "release\AutoVoucherLauncher.exe" } else { "release\$file" }
             $expected = (Get-Item $localFile).Length
-            $response = Invoke-WebRequest -UseBasicParsing -Method Head "$base/$channel/$file"
+            $response = Invoke-WebRequest -UseBasicParsing -Method Head "$base/stable/$file"
             $contentLength = $response.Headers["Content-Length"] | Select-Object -First 1
             if (-not $contentLength) { throw "Published response has no Content-Length for $file" }
             if ([int64]$contentLength -ne $expected) { throw "Published size mismatch for $file" }
@@ -262,16 +238,15 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
         shell: pwsh
         run: |
-          $channel = "${{ steps.release.outputs.channel }}"
           $version = "${{ steps.release.outputs.version }}"
           $setup = "release\AutoVoucher-Setup-$version-windows-x64.exe"
           $prefix = $env:AUTO_VOUCHER_R2_PREFIX.Trim("/")
-          $alias = "$prefix/$channel/AutoVoucher-Setup-windows-x64.exe"
+          $alias = "$prefix/stable/AutoVoucher-Setup-windows-x64.exe"
           $endpoint = "https://$env:CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com"
           aws s3api put-object --no-cli-pager --endpoint-url $endpoint --bucket $env:AUTO_VOUCHER_R2_BUCKET --key $alias --body $setup --content-type "application/vnd.microsoft.portable-executable" --cache-control "no-store"
           if ($LASTEXITCODE -ne 0) { throw "R2 public installer alias upload failed" }
           $download = Join-Path $env:RUNNER_TEMP "AutoVoucher-Setup-readback.exe"
-          Invoke-WebRequest -UseBasicParsing "$($env:AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL.TrimEnd('/'))/$channel/AutoVoucher-Setup-windows-x64.exe" -OutFile $download
+          Invoke-WebRequest -UseBasicParsing "$($env:AUTO_VOUCHER_PUBLIC_UPDATE_BASE_URL.TrimEnd('/'))/stable/AutoVoucher-Setup-windows-x64.exe" -OutFile $download
           $expected = (Get-FileHash $setup -Algorithm SHA256).Hash
           $actual = (Get-FileHash $download -Algorithm SHA256).Hash
           if ($actual -ne $expected) { throw "Public installer alias hash mismatch" }
@@ -283,9 +258,7 @@ jobs:
           path: |
             release/AutoVoucherLauncher.exe
             release/AutoVoucher-Setup-*.exe
-            release/AutoVoucherCore-*.zip
-            release/AutoVoucherOCR-*.zip
-            release/AutoVoucherPDF-*.zip
+            release/AutoVoucherApp-*.zip
             release/manifest.json
             release/manifest.json.sig
           if-no-files-found: error
