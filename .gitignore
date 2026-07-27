@@ -15,6 +15,7 @@ dist-pyinstaller/
 dist-ocr/
 dist-pdf/
 release/
+release-assets/
 
 # Generated visual assets stay local; PRD and architecture documents are source.
 design/
