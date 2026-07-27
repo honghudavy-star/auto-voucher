@@ -41,10 +41,11 @@ test("Windows BAT launcher preserves the complete source runtime", async () => {
   assert.match(updater, /archive\/refs\/heads\/main\.zip/);
   assert.match(updater, /Start-Auto-Voucher\.bat/);
   assert.match(updater, /exit 0\s*$/);
-  assert.match(statusPage, /正在检测这台电脑/);
+  assert.match(statusPage, /&#27491;&#22312;&#26816;&#27979;/);
   assert.match(statusPage, /Node\.js/);
   assert.match(statusPage, /Python/);
   assert.match(statusPage, /location\.replace/);
+  assert.doesNotMatch(statusPage, /[^\x00-\x7F]/);
   assert.match(bundleBuilder, /"AutoVoucher"/);
   assert.match(bundleBuilder, /"Start-Auto-Voucher\.bat"/);
   assert.match(bundleBuilder, /Remove-Item -LiteralPath \(Join-Path \$inner "Start-Auto-Voucher\.bat"\)/);

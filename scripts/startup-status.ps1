@@ -21,19 +21,19 @@ $temporaryPath = Join-Path $runtimeDirectory "startup.html.tmp"
 New-Item -ItemType Directory -Path $runtimeDirectory -Force | Out-Null
 
 $phaseCopy = @{
-    checking = @("正在检测这台电脑", "先确认运行环境，再开始配置。")
-    updating = @("正在检查更新", "本地版本可继续使用，更新失败不会阻止启动。")
-    configuring = @("正在准备运行环境", "首次启动需要安装完整组件，请保持网络连接。")
-    starting = @("正在启动本地服务", "数据只在这台电脑上处理。")
-    ready = @("准备完成", "正在进入 Auto Voucher。")
-    missing_node = @("需要安装 Node.js", "安装 Node.js 22 LTS 后，再次双击启动文件。")
-    missing_python = @("需要安装 Python", "安装 Python 3.12 后，再次双击启动文件。")
-    error = @("启动没有完成", "错误已经保存在本地日志中，可据此准确排查。")
+    checking = @("&#27491;&#22312;&#26816;&#27979;&#36825;&#21488;&#30005;&#33041;", "&#20808;&#30830;&#35748;&#36816;&#34892;&#29615;&#22659;&#65292;&#20877;&#24320;&#22987;&#37197;&#32622;&#12290;")
+    updating = @("&#27491;&#22312;&#26816;&#26597;&#26356;&#26032;", "&#26412;&#22320;&#29256;&#26412;&#21487;&#32487;&#32493;&#20351;&#29992;&#65292;&#26356;&#26032;&#22833;&#36133;&#19981;&#20250;&#38459;&#27490;&#21551;&#21160;&#12290;")
+    configuring = @("&#27491;&#22312;&#20934;&#22791;&#36816;&#34892;&#29615;&#22659;", "&#39318;&#27425;&#21551;&#21160;&#38656;&#35201;&#23433;&#35013;&#23436;&#25972;&#32452;&#20214;&#65292;&#35831;&#20445;&#25345;&#32593;&#32476;&#36830;&#25509;&#12290;")
+    starting = @("&#27491;&#22312;&#21551;&#21160;&#26412;&#22320;&#26381;&#21153;", "&#25968;&#25454;&#21482;&#22312;&#36825;&#21488;&#30005;&#33041;&#19978;&#22788;&#29702;&#12290;")
+    ready = @("&#20934;&#22791;&#23436;&#25104;", "&#27491;&#22312;&#36827;&#20837; Auto Voucher&#12290;")
+    missing_node = @("&#38656;&#35201;&#23433;&#35013; Node.js", "&#23433;&#35013; Node.js 22 LTS &#21518;&#65292;&#20877;&#27425;&#21452;&#20987;&#21551;&#21160;&#25991;&#20214;&#12290;")
+    missing_python = @("&#38656;&#35201;&#23433;&#35013; Python", "&#23433;&#35013; Python 3.12 &#21518;&#65292;&#20877;&#27425;&#21452;&#20987;&#21551;&#21160;&#25991;&#20214;&#12290;")
+    error = @("&#21551;&#21160;&#27809;&#26377;&#23436;&#25104;", "&#38169;&#35823;&#24050;&#32463;&#20445;&#23384;&#22312;&#26412;&#22320;&#26085;&#24535;&#20013;&#65292;&#21487;&#25454;&#27492;&#20934;&#30830;&#25490;&#26597;&#12290;")
 }
 $statusCopy = @{
-    checking = @("检测中", "pending")
-    ready = @("已就绪", "complete")
-    missing = @("需要安装", "blocked")
+    checking = @("&#26816;&#27979;&#20013;", "pending")
+    ready = @("&#24050;&#23601;&#32490;", "complete")
+    missing = @("&#38656;&#35201;&#23433;&#35013;", "blocked")
 }
 
 $title = $phaseCopy[$Phase][0]
@@ -47,10 +47,10 @@ $safeLogPath = [System.Net.WebUtility]::HtmlEncode($LogPath)
 $safeAppUrl = [System.Net.WebUtility]::HtmlEncode($AppUrl)
 $refresh = if ($Phase -in @("ready", "missing_node", "missing_python", "error")) { "" } else { '<meta http-equiv="refresh" content="2">' }
 $redirect = if ($Phase -eq "ready") { "<script>setTimeout(function(){location.replace('$safeAppUrl')},900)</script>" } else { "" }
-$nodeAction = if ($Phase -eq "missing_node") { '<a class="action" href="https://nodejs.org/en/download">下载 Node.js 22 LTS</a>' } else { "" }
-$pythonAction = if ($Phase -eq "missing_python") { '<a class="action" href="https://www.python.org/downloads/windows/">下载 Python 3.12</a>' } else { "" }
+$nodeAction = if ($Phase -eq "missing_node") { '<a class="action" href="https://nodejs.org/en/download">&#19979;&#36733; Node.js 22 LTS</a>' } else { "" }
+$pythonAction = if ($Phase -eq "missing_python") { '<a class="action" href="https://www.python.org/downloads/windows/">&#19979;&#36733; Python 3.12</a>' } else { "" }
 $logSection = if ($Phase -eq "error") {
-    "<div class='log'><span>启动日志</span><code>$safeLogPath</code></div>"
+    "<div class='log'><span>&#21551;&#21160;&#26085;&#24535;</span><code>$safeLogPath</code></div>"
 } else {
     ""
 }
@@ -62,7 +62,7 @@ $html = @"
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   $refresh
-  <title>Auto Voucher 启动检测</title>
+  <title>Auto Voucher &#21551;&#21160;&#26816;&#27979;</title>
   <style>
     :root{color-scheme:light;--ink:#29231f;--muted:#766b63;--paper:#fbf6ef;--panel:#fffdf9;--line:#e5d8cc;--coral:#cf684f;--sage:#466d5c;--amber:#a76c20;--red:#9b4039}
     *{box-sizing:border-box}
@@ -91,18 +91,18 @@ $html = @"
 </head>
 <body>
   <main>
-    <p class="eyebrow">Auto Voucher · 本地启动</p>
+    <p class="eyebrow">Auto Voucher &middot; &#26412;&#22320;&#21551;&#21160;</p>
     <h1>$title</h1>
     <p class="lead">$subtitle</p>
-    <section class="rail" aria-label="环境检测结果">
+    <section class="rail" aria-label="&#29615;&#22659;&#26816;&#27979;&#32467;&#26524;">
       <article class="check">
         <span class="number">01</span>
-        <div><h2>Node.js</h2><p>用于准备本地网页界面</p></div>
+        <div><h2>Node.js</h2><p>&#29992;&#20110;&#20934;&#22791;&#26412;&#22320;&#32593;&#39029;&#30028;&#38754;</p></div>
         <span class="badge $nodeClass">$nodeLabel</span>
       </article>
       <article class="check">
         <span class="number">02</span>
-        <div><h2>Python</h2><p>用于凭证处理、OCR 与 PDF 能力</p></div>
+        <div><h2>Python</h2><p>&#29992;&#20110;&#20973;&#35777;&#22788;&#29702;&#12289;OCR &#19982; PDF &#33021;&#21147;</p></div>
         <span class="badge $pythonClass">$pythonLabel</span>
       </article>
     </section>
@@ -110,7 +110,7 @@ $html = @"
     $nodeAction
     $pythonAction
     $logSection
-    <footer>所有业务数据均保存在本机。关闭此页面不会删除数据。</footer>
+    <footer>&#25152;&#26377;&#19994;&#21153;&#25968;&#25454;&#22343;&#20445;&#23384;&#22312;&#26412;&#26426;&#12290;&#20851;&#38381;&#27492;&#39029;&#38754;&#19981;&#20250;&#21024;&#38500;&#25968;&#25454;&#12290;</footer>
   </main>
   $redirect
 </body>
