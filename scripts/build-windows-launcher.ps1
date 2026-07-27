@@ -31,7 +31,7 @@ $pyprojectPath = Join-Path $repositoryRoot 'pyproject.toml'
 $packageVersion = (Get-Content $packageJsonPath -Raw | ConvertFrom-Json).version
 $pyprojectMatch = [regex]::Match(
     (Get-Content $pyprojectPath -Raw),
-    '(?m)^version = "([^"]+)"$'
+    '(?m)^version\s*=\s*"([^"]+)"\s*$'
 )
 if (-not $pyprojectMatch.Success) {
     throw 'pyproject.toml does not declare a project version'
@@ -48,7 +48,12 @@ if ($manifestUri.AbsolutePath -notlike "*$expectedManifestSuffix") {
 }
 
 $goCommand = Get-Command go -ErrorAction Stop
-$outputPath = [System.IO.Path]::GetFullPath($Output)
+$outputPath = if ([System.IO.Path]::IsPathRooted($Output)) {
+    [System.IO.Path]::GetFullPath($Output)
+}
+else {
+    [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot $Output))
+}
 $outputDirectory = Split-Path -Parent $outputPath
 New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
 
