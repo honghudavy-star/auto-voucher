@@ -197,19 +197,13 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "未连接轻量启动器"):
                 client.command("check")
 
-    def test_launcher_client_allows_bounded_storage_cleanup(self):
+    def test_launcher_client_rejects_removed_component_cleanup_command(self):
         with tempfile.TemporaryDirectory() as directory:
             client = LauncherClient(RuntimeStore(Path(directory)))
             client.endpoint = "http://127.0.0.1:8765"
             client.token = "test-token"
-            with patch.object(
-                client,
-                "_request",
-                return_value={"available": True, "removedFiles": 3, "freedBytes": 1024},
-            ) as request:
-                result = client.command("cleanup")
-            self.assertEqual(result["removedFiles"], 3)
-            request.assert_called_once_with("POST", "/v1/update/cleanup", {})
+            with self.assertRaisesRegex(ValueError, "不允许执行"):
+                client.command("cleanup")
 
 
 if __name__ == "__main__":
