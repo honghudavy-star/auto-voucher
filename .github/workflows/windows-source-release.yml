@@ -81,7 +81,7 @@ jobs:
           $bootstrapScript = Join-Path $bundleRoot "scripts\environment-bootstrap.ps1"
           $bootstrapJob = Start-Job -ScriptBlock {
             param($ScriptPath, $RootPath)
-            & $ScriptPath -Root $RootPath -Mode Serve -Port 18764
+            & $ScriptPath -Root $RootPath -Mode Serve -Port 18764 -ExitWhenTerminal
           } -ArgumentList $bootstrapScript, $bundleRoot
           try {
             $page = $null
@@ -108,15 +108,10 @@ jobs:
               throw "Environment bootstrap did not reach ready state: $($state | ConvertTo-Json -Compress)"
             }
           } finally {
-            foreach ($pidFileName in @("environment-install.pid", "environment-server.pid")) {
-              $pidPath = Join-Path $bundleRoot ".auto-voucher-runtime\$pidFileName"
-              if (Test-Path -LiteralPath $pidPath) {
-                $processId = [int](Get-Content -LiteralPath $pidPath -Raw)
-                Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
-              }
+            $completedJob = Wait-Job -Job $bootstrapJob -Timeout 10
+            if (-not $completedJob) {
+              throw "Environment bootstrap smoke server did not exit after reaching a terminal state"
             }
-            Wait-Job -Job $bootstrapJob -Timeout 10 | Out-Null
-            Remove-Job -Job $bootstrapJob -Force -ErrorAction SilentlyContinue
           }
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

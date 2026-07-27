@@ -6,7 +6,8 @@ param(
     [int]$Port = 18764,
     [string]$AppUrl = "http://127.0.0.1:8765/",
     [string]$Status = "launching",
-    [string]$Message = "preparing_application"
+    [string]$Message = "preparing_application",
+    [switch]$ExitWhenTerminal
 )
 
 $ErrorActionPreference = "Stop"
@@ -495,6 +496,12 @@ function Start-BootstrapServer {
                 Write-BootstrapLog "Request failed: $($_.Exception.Message)"
             } finally {
                 $client.Close()
+            }
+            if ($ExitWhenTerminal -and (Test-Path -LiteralPath $statePath)) {
+                $currentState = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($currentState.status -in @("ready", "error")) {
+                    break
+                }
             }
         }
     } finally {
