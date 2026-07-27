@@ -57,6 +57,9 @@ test("Windows BAT launcher preserves the complete source runtime", async () => {
   assert.match(environmentBootstrap, /Install-LocalPython/);
   assert.match(environmentBootstrap, /UV_PYTHON_INSTALL_DIR/);
   assert.match(environmentBootstrap, /UV_PYTHON_BIN_DIR/);
+  assert.match(environmentBootstrap, /environment-state\.\$\(\$PID\)\.tmp/);
+  assert.match(environmentBootstrap, /environment-state\.\$\(\$PID\)\.bak/);
+  assert.match(environmentBootstrap, /\[IO\.File\]::Replace/);
   assert.match(environmentBootstrap, /python install \$pythonVersion --managed-python --no-progress/);
   assert.match(environmentBootstrap, /python find \$pythonVersion --managed-python/);
   assert.match(environmentBootstrap, /7df0bc9375723f4a86b3aa1b7cc73342423d9677a8df4538aca31a049e309c29/);
@@ -76,6 +79,6 @@ test("Windows BAT launcher preserves the complete source runtime", async () => {
   assert.match(sourceReleaseWorkflow, /-ExitWhenTerminal/);
   assert.doesNotMatch(sourceReleaseWorkflow, /Stop-Job/);
   assert.doesNotMatch(sourceReleaseWorkflow, /startup-status\.ps1/);
-  assert.equal(packageJson.version, "0.2.6");
+  assert.equal(packageJson.version, "0.2.7");
   assert.doesNotMatch(launcher, /AutoVoucher(?:Core|OCR|PDF|Setup).*\.exe/i);
 });
