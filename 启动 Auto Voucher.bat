@@ -32,6 +32,12 @@ if not defined PYTHON_BOOTSTRAP (
   python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>nul
   if not errorlevel 1 set "PYTHON_BOOTSTRAP=python"
 )
+if not defined PYTHON_BOOTSTRAP if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
+  set "PYTHON_BOOTSTRAP="%LOCALAPPDATA%\Programs\Python\Python312\python.exe""
+)
+if not defined PYTHON_BOOTSTRAP if exist "%ProgramFiles%\Python312\python.exe" (
+  set "PYTHON_BOOTSTRAP="%ProgramFiles%\Python312\python.exe""
+)
 if not defined PYTHON_BOOTSTRAP goto :missing_python
 
 if not exist "%VENV_PYTHON%" (
@@ -67,7 +73,9 @@ set "PYTHONPATH=%CD%\backend"
 set "AUTO_VOUCHER_CORE_VERSION=%APP_VERSION%-source"
 set "AUTO_VOUCHER_OCR_WORKER=%CD%\packaging\ocr_worker.py"
 set "AUTO_VOUCHER_PDF_WORKER=%CD%\packaging\pdf_worker.py"
-"%VENV_PYTHON%" -m auto_voucher
+set "SERVER_ARGS="
+if /I "%AUTO_VOUCHER_NO_BROWSER%"=="1" set "SERVER_ARGS=--no-browser"
+"%VENV_PYTHON%" -m auto_voucher %SERVER_ARGS%
 set "APP_EXIT=%ERRORLEVEL%"
 if "%APP_EXIT%"=="0" exit /b 0
 
