@@ -178,11 +178,11 @@ const routes = {
   vouchers: { label: "生成及复核", icon: "voucher", path: "/workspace/vouchers", section: "workspace" },
   delivery: { label: "推送及状态", icon: "refresh", path: "/workspace/delivery", section: "workspace" },
   query: { label: "查询与审计", icon: "chart", path: "/workspace/query", section: "workspace" },
-  connectors: { label: "连接器", icon: "link", path: "/workspace/connectors", section: "workspace" },
-  ocr: { label: "OCR", icon: "scan", path: "/workspace/ocr", section: "workspace" },
-  settings: { label: "通用设置", icon: "settings", path: "/workspace/settings", section: "workspace" },
-  diagnostics: { label: "诊断日志", icon: "file", path: "/workspace/diagnostics", section: "workspace" },
-  backup: { label: "备份与恢复", icon: "download", path: "/workspace/backup", section: "workspace" },
+  connectors: { label: "连接器", icon: "link", path: "/workspace/connectors", section: "tools" },
+  ocr: { label: "OCR", icon: "scan", path: "/workspace/ocr", section: "tools" },
+  settings: { label: "通用设置", icon: "settings", path: "/workspace/settings", section: "tools" },
+  diagnostics: { label: "诊断日志", icon: "file", path: "/workspace/diagnostics", section: "tools" },
+  backup: { label: "备份与恢复", icon: "download", path: "/workspace/backup", section: "tools" },
 };
 
 const primaryNavigation = [
@@ -191,20 +191,33 @@ const primaryNavigation = [
   { key: "rules", label: "凭证规则", icon: "rules", route: "rules" },
   { key: "launch", label: "测试上线", icon: "shield", route: "launch" },
   { key: "workspace", label: "凭证工作台", icon: "voucher", route: "dashboard" },
+  { key: "tools", label: "系统工具", icon: "settings", route: "connectors" },
 ];
 
 const sectionNavigation = {
   workspace: [
-    { route: "import", step: "01", label: "取数" },
-    { route: "events", step: "02", label: "业务事项" },
-    { route: "vouchers", step: "03", label: "凭证草稿与复核" },
-    { route: "delivery", step: "04", label: "推送及状态" },
-    { route: "query", step: "05", label: "查询与审计" },
-    { route: "connectors", label: "连接器" },
-    { route: "ocr", label: "OCR" },
-    { route: "settings", label: "通用设置" },
-    { route: "diagnostics", label: "诊断日志" },
-    { route: "backup", label: "备份与恢复" },
+    {
+      label: "日常流程",
+      items: [
+        { route: "import", step: "1", label: "导入资料", hint: "文件、审批与流水" },
+        { route: "events", step: "2", label: "业务事项", hint: "识别结果与异常" },
+        { route: "vouchers", step: "3", label: "生成与复核", hint: "凭证草稿与确认" },
+        { route: "delivery", step: "4", label: "推送状态", hint: "预检、推送与回查" },
+        { route: "query", step: "5", label: "查询审计", hint: "凭证与操作记录" },
+      ],
+    },
+  ],
+  tools: [
+    {
+      label: "配置与维护",
+      items: [
+        { route: "connectors", icon: "link", label: "连接器" },
+        { route: "ocr", icon: "scan", label: "OCR 识别" },
+        { route: "settings", icon: "settings", label: "通用设置" },
+        { route: "diagnostics", icon: "file", label: "诊断日志" },
+        { route: "backup", icon: "download", label: "备份恢复" },
+      ],
+    },
   ],
 };
 
@@ -324,6 +337,7 @@ function sidebar() {
           <button
             class="primary-nav-item ${activeSection === item.key ? "active" : ""} ${isExpanded ? "expanded" : ""}"
             data-route="${item.route}"
+            ${hasChildren ? `data-section-toggle="${item.key}"` : ""}
             ${hasChildren ? `aria-expanded="${isExpanded}" aria-controls="subnav-${item.key}"` : ""}
           >
             ${icon(item.icon)}<span>${item.label}</span>
@@ -340,16 +354,33 @@ function sidebar() {
               ${isExpanded ? "" : "inert"}
             >
               <div class="side-subnav" aria-label="${item.label}内部导航">
-              ${sectionNavigation[item.key].map((child) => `
-                <button
-                  class="${child.step ? "with-step" : "plain"} ${route === child.route || (child.route === "events" && route === "exceptions") ? "active" : ""}"
-                  data-route="${child.route}"
-                >
-                  ${child.step ? `<small>${child.step}</small>` : ""}<span>${child.label}</span>
-                  ${child.route === "events" && pendingExceptions ? `<b class="warning-count">${pendingExceptions}</b>` : ""}
-                  ${child.route === "vouchers" && pendingReviews ? `<b>${pendingReviews}</b>` : ""}
-                </button>
-              `).join("")}
+              ${sectionNavigation[item.key].map((group) => {
+                const groupContent = `
+                  <div class="side-subnav-items">
+                    ${group.items.map((child) => `
+                      <button
+                        class="${child.step ? "with-step" : "plain"} ${route === child.route || (child.route === "events" && route === "exceptions") ? "active" : ""}"
+                        data-route="${child.route}"
+                        ${child.hint ? `aria-label="${child.label}：${child.hint}"` : ""}
+                      >
+                        ${child.step
+                          ? `<small class="subnav-step">${child.step}</small>`
+                          : `<span class="subnav-tool-icon">${icon(child.icon)}</span>`}
+                        <span class="subnav-copy">
+                          <strong>${child.label}</strong>
+                          ${child.hint ? `<small>${child.hint}</small>` : ""}
+                        </span>
+                        ${child.route === "events" && pendingExceptions ? `<b class="warning-count">${pendingExceptions}</b>` : ""}
+                        ${child.route === "vouchers" && pendingReviews ? `<b>${pendingReviews}</b>` : ""}
+                      </button>
+                    `).join("")}
+                  </div>`;
+                return `
+                  <section class="side-subnav-group" aria-label="${group.label}">
+                    <p class="side-subnav-label">${group.label}</p>
+                    ${groupContent}
+                  </section>`;
+              }).join("")}
               </div>
             </div>
           ` : ""}
@@ -2382,7 +2413,12 @@ function attachEvents() {
   document.querySelectorAll("[data-section-toggle]").forEach((element) => {
     element.addEventListener("click", () => {
       const section = element.dataset.sectionToggle;
-      expandedSection = expandedSection === section ? null : section;
+      const shouldExpand = expandedSection !== section;
+      expandedSection = shouldExpand ? section : null;
+      if (shouldExpand && currentSection() !== section) {
+        navigate(element.dataset.route);
+        return;
+      }
       document.querySelectorAll("[data-section-toggle]").forEach((toggle) => {
         const expanded = toggle.dataset.sectionToggle === expandedSection;
         toggle.classList.toggle("expanded", expanded);
@@ -2396,7 +2432,7 @@ function attachEvents() {
       });
     });
   });
-  document.querySelectorAll("[data-route]").forEach((element) => {
+  document.querySelectorAll("[data-route]:not([data-section-toggle])").forEach((element) => {
     element.addEventListener("click", () => navigate(element.dataset.route));
   });
   document.querySelector("[data-setup-plan]")?.addEventListener("submit", async (event) => {

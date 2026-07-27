@@ -210,6 +210,69 @@ func TestDownloadPackageResumesAndVerifiesSignature(t *testing.T) {
 	}
 }
 
+func TestDownloadPackageDoesNotUseMetadataClientTimeout(t *testing.T) {
+	body := bytes.Repeat([]byte("slow-package"), 1024)
+	privateKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{6}, ed25519.SeedSize))
+	digest := sha256.Sum256(body)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		time.Sleep(40 * time.Millisecond)
+		_, _ = writer.Write(body)
+	}))
+	defer server.Close()
+
+	previousKey := manifestPublicKey
+	manifestPublicKey = base64.StdEncoding.EncodeToString(privateKey.Public().(ed25519.PublicKey))
+	t.Cleanup(func() { manifestPublicKey = previousKey })
+	client := server.Client()
+	client.Timeout = 10 * time.Millisecond
+	root := t.TempDir()
+	launcher := Launcher{
+		client: client,
+		dirs:   Directories{StateFile: filepath.Join(root, "state.json")},
+		state:  State{Status: "downloading"},
+	}
+	pkg := Package{
+		URL:       server.URL + "/core.zip",
+		Size:      int64(len(body)),
+		SHA256:    hex.EncodeToString(digest[:]),
+		Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, digest[:])),
+	}
+	if err := launcher.downloadPackage(context.Background(), pkg, filepath.Join(root, "core.zip.part")); err != nil {
+		t.Fatalf("package download inherited metadata timeout: %v", err)
+	}
+}
+
+func TestBackgroundDownloadFailureBecomesRetryableError(t *testing.T) {
+	root := t.TempDir()
+	stateFile := filepath.Join(root, "launcher-state.json")
+	launcher := Launcher{
+		dirs: Directories{StateFile: stateFile, Logs: root},
+		state: State{
+			Status:           "downloading",
+			AvailableVersion: "0.2.2",
+			Progress:         60,
+			Components:       map[string]string{},
+		},
+	}
+	launcher.recordBackgroundDownloadFailure(context.DeadlineExceeded)
+	if launcher.state.Status != "error" {
+		t.Fatalf("expected retryable error state, got %q", launcher.state.Status)
+	}
+	if launcher.state.AvailableVersion != "0.2.2" || launcher.state.Progress != 60 {
+		t.Fatal("partial download evidence should be retained for resume")
+	}
+	if launcher.state.LastSupportCode == "" || !strings.Contains(launcher.state.Message, "继续下载") {
+		t.Fatal("download failure should include support evidence and retry guidance")
+	}
+	persisted, err := loadState(stateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != "error" || persisted.AvailableVersion != "0.2.2" {
+		t.Fatal("retryable failure state was not persisted")
+	}
+}
+
 func TestRestoreDatabaseBackupIsAtomicAndPreservesFailedDatabase(t *testing.T) {
 	root := t.TempDir()
 	data := filepath.Join(root, "data")

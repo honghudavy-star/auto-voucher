@@ -1,6 +1,6 @@
 #define MyAppName "Auto Voucher"
 #ifndef MyAppVersion
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.2.2"
 #endif
 #define MyAppPublisher "Auto Voucher Contributors"
 #define MyAppExeName "AutoVoucherLauncher.exe"
