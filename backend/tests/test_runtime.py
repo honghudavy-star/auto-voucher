@@ -197,6 +197,14 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "未连接轻量启动器"):
                 client.command("check")
 
+    def test_launcher_client_rejects_removed_component_cleanup_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client = LauncherClient(RuntimeStore(Path(directory)))
+            client.endpoint = "http://127.0.0.1:8765"
+            client.token = "test-token"
+            with self.assertRaisesRegex(ValueError, "不允许执行"):
+                client.command("cleanup")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,18 +14,9 @@ Auto Voucher 是一个开源、本地优先的财务凭证自动化工作台。�
 
 1. 解压下载的 ZIP；
 2. 打开解压后的 `auto-voucher-main` 根目录，不要进入 `src`、`backend` 或 `launcher`；
-3. 在文件夹空白处右键，选择“在终端中打开”；
-4. 在打开的 PowerShell 窗口中依次执行：
+3. 双击根目录里的 **`启动AutoVoucher.bat`**。
 
-```powershell
-npm install
-npm run build
-py -3.12 -m pip install -e .
-$env:PYTHONPATH = "backend"
-py -3.12 -m auto_voucher
-```
-
-首次运行会下载依赖。程序启动后会自动打开浏览器；如果没有自动打开，请访问：
+BAT 首次运行会创建项目专用环境，并安装 Core、OCR、PDF 全部组件；后续运行会直接复用。程序启动后会自动打开浏览器；如果没有自动打开，请访问：
 
 ```text
 http://127.0.0.1:8765/
@@ -33,7 +24,8 @@ http://127.0.0.1:8765/
 
 ## 主要功能
 
-- 导入 CSV、XLSX、XML、XBRL、OFD、PDF、图片和银行流水；
+- 导入 CSV、TXT、XLS、XLSX、XML、XBRL、OFD、PDF、图片和银行流水；
+- 内置《小企业会计准则》（财会〔2011〕17号）66 个默认科目，支持修改、增删、恢复默认以及导入企业科目表；
 - 基于确定性规则生成借贷平衡的凭证草稿；
 - 校验科目、供应商、客户、部门、项目和辅助核算；
 - 支持异常阻断、人工复核、操作审计和幂等回查；

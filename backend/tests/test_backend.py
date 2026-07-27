@@ -2,7 +2,9 @@ import json
 import hashlib
 import os
 import shutil
+import sys
 import tempfile
+import types
 import unittest
 import zipfile
 from io import BytesIO
@@ -10,7 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from auto_voucher.database import Database
-from auto_voucher.importers import parse_csv, to_cents
+from auto_voucher.importers import parse_csv, parse_rows, to_cents
 from auto_voucher.server import create_backup_package, inspect_backup, restore_backup
 from auto_voucher.security import redact_text
 from auto_voucher.service import (
@@ -212,6 +214,50 @@ class BackendTests(unittest.TestCase):
             self.assertEqual(matched["matchedTemplate"]["name"], "自定义采购模板")
             self.assertEqual(matched["suggestedMapping"], mapping)
 
+    def test_tab_delimited_txt_can_be_previewed_and_imported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory))
+            database.put_state(empty_state())
+            service = VoucherService(database)
+            content = (
+                "业务日期\t供应商\t含税金额\t审批单号\n"
+                "2026-07-26\t文本供应商\t128.50\tTXT-001\n"
+            ).encode()
+            preview = service.preview_file("银行流水.txt", content)
+            result = service.import_files([("银行流水.txt", content, "text/plain")])
+            self.assertEqual(preview["headers"], ["业务日期", "供应商", "含税金额", "审批单号"])
+            self.assertEqual(result["createdEvents"], 1)
+            self.assertEqual(result["state"]["events"][0]["amountCents"], 12_850)
+
+    def test_legacy_xls_uses_first_sheet_and_preserves_headers(self):
+        class FakeSheet:
+            nrows = 2
+            ncols = 4
+            values = [
+                ["业务日期", "供应商", "含税金额", "审批单号"],
+                ["2026-07-26", "旧版表格供应商", 99.5, "XLS-001"],
+            ]
+
+            def cell_value(self, row, column):
+                return self.values[row][column]
+
+        class FakeWorkbook:
+            def sheet_by_index(self, index):
+                self.index = index
+                return FakeSheet()
+
+            def release_resources(self):
+                self.released = True
+
+        fake_xlrd = types.SimpleNamespace(
+            XLRDError=ValueError,
+            open_workbook=lambda **_kwargs: FakeWorkbook(),
+        )
+        with patch.dict(sys.modules, {"xlrd": fake_xlrd}):
+            rows = parse_rows("银行流水.xls", b"legacy-xls")
+        self.assertEqual(rows[0]["供应商"], "旧版表格供应商")
+        self.assertEqual(rows[0]["含税金额"], 99.5)
+
     def test_master_data_import_keeps_versions(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory))
@@ -231,6 +277,35 @@ class BackendTests(unittest.TestCase):
             self.assertFalse(records[0]["active"])
             self.assertTrue(records[1]["active"])
             self.assertEqual(records[1]["requiredDimensions"], ["部门", "项目"])
+
+    def test_account_only_template_is_recognized_as_master_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory))
+            state = empty_state()
+            state["masterData"] = [{
+                "id": "MD-DEFAULT-ACCOUNT-1002",
+                "category": "account",
+                "categoryLabel": "科目",
+                "code": "1002",
+                "name": "银行存款",
+                "status": "启用",
+                "normalBalance": "借",
+                "requiredDimensions": [],
+                "version": 1,
+                "active": True,
+            }]
+            database.put_state(state)
+            service = VoucherService(database)
+            content = "科目编码,科目名称,方向\n1002,银行存款-人民币,借\n".encode()
+            preview = service.preview_file("客户科目表.csv", content)
+            result = service.import_files([("客户科目表.csv", content, "text/csv")])
+            active = [
+                item for item in result["state"]["masterData"]
+                if item["category"] == "account" and item["active"]
+            ]
+            self.assertEqual(preview["kind"], "masterData")
+            self.assertEqual(active[0]["name"], "银行存款-人民币")
+            self.assertEqual(active[0]["version"], 2)
 
     def test_failed_structured_import_does_not_poison_hash_dedupe(self):
         with tempfile.TemporaryDirectory() as directory:

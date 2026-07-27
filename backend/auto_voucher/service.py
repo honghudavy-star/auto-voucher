@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .database import Database, utc_now
+from .defaults import account_group, account_normal_balance
 from .security import redact_text
 from .importers import (
     apply_mapping,
@@ -27,7 +28,7 @@ from .importers import (
 )
 
 
-SUPPORTED = {".csv", ".xlsx", ".xml", ".xbrl", ".ofd", ".pdf", ".png", ".jpg", ".jpeg"}
+SUPPORTED = {".csv", ".txt", ".xls", ".xlsx", ".xml", ".xbrl", ".ofd", ".pdf", ".png", ".jpg", ".jpeg"}
 
 
 class VoucherService:
@@ -36,8 +37,8 @@ class VoucherService:
 
     def preview_file(self, filename: str, content: bytes) -> dict[str, Any]:
         suffix = Path(filename).suffix.lower()
-        if suffix not in {".csv", ".xlsx"}:
-            raise ValueError("只有 CSV 和 XLSX 支持字段映射预览")
+        if suffix not in {".csv", ".txt", ".xls", ".xlsx"}:
+            raise ValueError("只有 CSV、TXT、XLS 和 XLSX 支持字段映射预览")
         rows = parse_rows(filename, content)
         if not rows:
             raise ValueError("文件没有可预览的数据行")
@@ -321,6 +322,17 @@ class VoucherService:
                 ),
                 None,
             )
+            if record["category"] == "account":
+                record["group"] = (
+                    record.get("group")
+                    or (current or {}).get("group")
+                    or account_group(record["code"])
+                )
+                record["normalBalance"] = (
+                    record.get("normalBalance")
+                    or (current or {}).get("normalBalance")
+                    or account_normal_balance(record["code"])
+                )
             comparable = {key: value for key, value in record.items() if key != "version"}
             if current and all(current.get(key) == value for key, value in comparable.items()):
                 continue
@@ -525,6 +537,8 @@ class VoucherService:
 def file_type(suffix: str) -> str:
     return {
         ".csv": "结构化表格",
+        ".txt": "分隔文本",
+        ".xls": "旧版 Excel",
         ".xlsx": "Excel",
         ".xml": "数电发票 XML",
         ".xbrl": "XBRL 电子凭证",
@@ -688,13 +702,18 @@ def parse_master_data_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not rows:
         return []
     type_keys = ("基础资料类型", "类型", "master_type")
-    code_keys = ("编码", "代码", "code")
-    name_keys = ("名称", "name")
-    if not (
-        any(key in rows[0] for key in type_keys)
-        and any(key in rows[0] for key in code_keys)
+    code_keys = ("科目编码", "编码", "代码", "code", "account_code")
+    name_keys = ("科目名称", "名称", "name", "account_name")
+    has_type = any(key in rows[0] for key in type_keys)
+    has_account_columns = (
+        any(key in rows[0] for key in code_keys)
         and any(key in rows[0] for key in name_keys)
-    ):
+    )
+    has_explicit_account_columns = (
+        any(key in rows[0] for key in ("科目编码", "account_code"))
+        and any(key in rows[0] for key in ("科目名称", "account_name"))
+    )
+    if not has_account_columns or (not has_type and not has_explicit_account_columns):
         return []
 
     def value(row: dict[str, Any], keys: tuple[str, ...]) -> str:
@@ -712,7 +731,7 @@ def parse_master_data_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     }
     records = []
     for row in rows:
-        raw_type = value(row, type_keys)
+        raw_type = value(row, type_keys) if has_type else "科目"
         code = value(row, code_keys)
         name = value(row, name_keys)
         if raw_type not in category_map:
@@ -725,6 +744,7 @@ def parse_master_data_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "code": code,
             "name": name,
             "status": value(row, ("状态", "status")) or "启用",
+            "normalBalance": value(row, ("方向", "余额方向", "normal_balance")) or "",
             "requiredDimensions": [
                 item.strip()
                 for item in re.split(r"[,，;；]", value(row, ("辅助核算", "required_dimensions")))

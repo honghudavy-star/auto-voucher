@@ -40,6 +40,7 @@ import {
   queryExternalVoucher,
   recheckExternalVoucher,
   resetState,
+  restoreDefaultAccounts,
   reportClientDiagnostic,
   repairEnvironment,
   restoreServerBackup,
@@ -67,6 +68,7 @@ let updateStatus = {
   progress: 0,
 };
 let runtimeStatus = { restartAllowed: false, restartBlockers: ["本地服务状态未知"] };
+let sourceMultiselectDocumentHandler = null;
 try {
   const [loadedState, catalogPayload, environmentPayload, updatePayload, runtimePayload] = await Promise.all([
     loadState(),
@@ -602,8 +604,8 @@ function environmentCard({ compact = false } = {}) {
       `).join("")}</div>` : ""}
       <div class="card-actions">
         <button class="secondary-button" data-check-environment>${icon("refresh")}重新检测环境</button>
-        ${issues.some((item) => ["disk-space", "core-assets"].includes(item.id))
-          ? `<button class="text-button" data-repair-environment="clear-update-cache">清理下载缓存</button>`
+        ${!compact || issues.some((item) => ["disk-space", "core-assets"].includes(item.id))
+          ? `<button class="text-button" data-repair-environment="clear-update-cache">清理旧版本和下载缓存</button>`
           : ""}
         ${compact ? "" : `<button class="text-button" data-repair-environment="recreate-shortcut" ${updateStatus.available ? "" : "disabled"}>重建桌面入口</button>`}
       </div>
@@ -647,49 +649,38 @@ function updateCard() {
 }
 
 function planPage() {
-  const enterprise = state.enterpriseProfiles?.[0] || {};
   const target = state.targetSystem || {};
   const sources = new Set((state.sourceSystems || []).map((item) => item.id));
-  const scenarios = new Set(state.businessScenarios || []);
   const targets = setupCatalog?.targets || [];
-  const sourceOptions = setupCatalog?.sources || [];
+  const sourceOptions = (setupCatalog?.sources || []).filter((item) => !item.hidden);
+  const selectedSourceLabels = sourceOptions
+    .filter((item) => sources.has(item.id))
+    .map((item) => `${item.brand} ${item.product}`);
+  const sourceSummary = selectedSourceLabels.length ? selectedSourceLabels.join("、") : "请选择";
   return `
     <section class="page-heading">
-      <div><span class="eyebrow">生产配置 · 第 1 级门槛</span><h1>接入方案</h1><p>先明确企业、目标 ERP、数据来源和业务场景，再由本地能力目录确定性生成完整数据流程。</p></div>
+      <div><span class="eyebrow">生产配置 · 第 1 级门槛</span><h1>接入方案</h1><p>选择目标 ERP 和数据来源，再由本地能力目录确定性生成完整数据流程；无需填写版本、部署方式或企业信息。</p></div>
       <span class="status-pill ${gateStatus("plan").tone}">${gateStatus("plan").label}</span>
     </section>
     <form class="setup-layout" data-setup-plan>
       <article class="glass-panel setup-form-panel">
-        <div class="panel-heading"><div><span class="eyebrow">企业与账套</span><h2>生产基础信息</h2></div></div>
-        <div class="form-grid setup-form-grid">
-          <label><span>企业名称 *</span><input name="name" required value="${escapeHtml(enterprise.name || "")}" /></label>
-          <label><span>法人主体 *</span><input name="legalEntity" required value="${escapeHtml(enterprise.legalEntity || "")}" /></label>
-          <label><span>账套 *</span><input name="accountSet" required value="${escapeHtml(enterprise.accountSet || "")}" /></label>
-          <label><span>账簿 *</span><input name="ledger" required value="${escapeHtml(enterprise.ledger || "")}" /></label>
-          <label><span>会计制度 *</span><input name="accountingStandard" required value="${escapeHtml(enterprise.accountingStandard || "")}" /></label>
-          <label><span>本位币 *</span><input name="baseCurrency" required value="${escapeHtml(enterprise.baseCurrency || "CNY")}" /></label>
-          <label><span>凭证字 *</span><input name="voucherType" required value="${escapeHtml(enterprise.voucherType || "")}" /></label>
-          <label><span>操作者 *</span><input name="operator" required value="${escapeHtml(enterprise.operator || state.operator || "")}" /></label>
-        </div>
-        <div class="panel-heading setup-section-heading"><div><span class="eyebrow">凭证接收端</span><h2>目标 ERP</h2></div></div>
+        <div class="panel-heading"><div><span class="eyebrow">凭证接收端</span><h2>目标 ERP</h2></div></div>
         <div class="form-grid setup-target-grid">
-          <label><span>品牌 / 产品 *</span><select name="targetSystemId" required>
+          <label><span>ERP 名称 *</span><select name="targetSystemId" required>
             <option value="">请选择</option>
-            ${targets.map((item) => `<option value="${item.id}" ${target.id === item.id ? "selected" : ""}>${escapeHtml(`${item.brand} · ${item.product}`)}</option>`).join("")}
+            ${targets.map((item) => `<option value="${item.id}" ${target.id === item.id ? "selected" : ""}>${escapeHtml(`${item.brand} ${item.product}`)}</option>`).join("")}
           </select></label>
-          <label><span>版本 *</span><input name="targetVersion" required value="${escapeHtml(target.selectedVersion || "")}" placeholder="以客户实际版本为准" /></label>
-          <label><span>部署方式 *</span><select name="deployment" required>
-            ${["客户本地部署", "厂商云", "客户私有云"].map((item) => `<option ${target.deployment === item ? "selected" : ""}>${item}</option>`).join("")}
-          </select></label>
+          <div class="setup-field">
+            <span>数据来源 *</span>
+            <details class="setup-multiselect" data-source-multiselect>
+              <summary><span data-source-summary>${escapeHtml(sourceSummary)}</span>${icon("chevron")}</summary>
+              <div class="setup-multiselect-menu" role="group" aria-label="数据来源">
+                ${sourceOptions.map((item) => `<label><input type="checkbox" name="sourceSystemIds" value="${item.id}" data-source-label="${escapeHtml(`${item.brand} ${item.product}`)}" ${sources.has(item.id) ? "checked" : ""} /><span>${escapeHtml(`${item.brand} ${item.product}`)}</span></label>`).join("")}
+              </div>
+            </details>
+          </div>
         </div>
-        <div class="setup-choice-group">
-          <strong>数据来源 *</strong>
-          <div class="setup-checks">${sourceOptions.map((item) => `<label><input type="checkbox" name="sourceSystemIds" value="${item.id}" ${sources.has(item.id) ? "checked" : ""} />${escapeHtml(`${item.brand} ${item.product}`)}</label>`).join("")}</div>
-        </div>
-        <div class="setup-choice-group">
-          <strong>自动化业务场景 *</strong>
-          <div class="setup-checks">${["费用报销", "采购付款", "销售收款", "资金划转"].map((item) => `<label><input type="checkbox" name="businessScenarios" value="${item}" ${scenarios.has(item) ? "checked" : ""} />${item}</label>`).join("")}</div>
-        </div>
+        <p class="setup-choice-help">数据来源可以多选。请选择实际使用的 OA 或本地文件；API 数据源将在下一步配置接口、鉴权、记录路径和字段映射。</p>
         <div class="form-actions"><button class="primary-button" type="submit">${icon("rules")}生成接入方案</button><span>配置变化会自动使下游验证失效</span></div>
       </article>
       <article class="glass-panel flow-plan-panel">
@@ -700,6 +691,50 @@ function planPage() {
         ` : `<div class="empty-state">${icon("rules")}<h3>尚未生成方案</h3><p>完成左侧必填项后生成连接方式、人工节点、阻断项和回查路径。</p></div>`}
       </article>
     </form>
+  `;
+}
+
+function accountMasterDataPanel() {
+  const accounts = (state.masterData || [])
+    .filter((item) => item.category === "account" && item.active !== false)
+    .sort((left, right) => String(left.code).localeCompare(String(right.code), "zh-CN"));
+  const source = state.defaultAccountSource || {};
+  return `
+    <section class="account-master-panel glass-panel">
+      <div class="panel-heading">
+        <div>
+          <span class="eyebrow">可编辑基础资料</span>
+          <h2>会计科目</h2>
+          <p>默认采用《${escapeHtml(source.title || "小企业会计准则科目表")}》${escapeHtml(source.documentNumber || "")}；导入同编码科目时生成新版本并保留历史。</p>
+        </div>
+        <b>${accounts.length} 个启用科目</b>
+      </div>
+      <div class="account-master-actions">
+        <button class="primary-button" data-add-account>${icon("plus")}新增科目</button>
+        <button class="secondary-button" data-route="import">${icon("upload")}导入科目表</button>
+        <button class="quiet-button" data-restore-default-accounts>${icon("refresh")}恢复默认科目</button>
+      </div>
+      <div class="account-master-head"><span>科目编码</span><span>科目名称</span><span>类别</span><span>余额方向</span><span>状态</span><span>操作</span></div>
+      <div class="account-master-list">
+        ${accounts.map((account) => `
+          <div class="account-master-row" data-account-row="${escapeHtml(account.id)}">
+            <input data-account-field="code" value="${escapeHtml(account.code)}" aria-label="科目编码" />
+            <input data-account-field="name" value="${escapeHtml(account.name)}" aria-label="科目名称" />
+            <input data-account-field="group" value="${escapeHtml(account.group || "")}" aria-label="科目类别" placeholder="例如：资产类" />
+            <select data-account-field="normalBalance" aria-label="余额方向">
+              <option value="借" ${account.normalBalance === "借" ? "selected" : ""}>借</option>
+              <option value="贷" ${account.normalBalance === "贷" ? "selected" : ""}>贷</option>
+            </select>
+            <select data-account-field="status" aria-label="状态">
+              <option value="启用" ${account.status !== "停用" ? "selected" : ""}>启用</option>
+              <option value="停用" ${account.status === "停用" ? "selected" : ""}>停用</option>
+            </select>
+            <span><button class="text-button" data-save-account="${escapeHtml(account.id)}">保存</button><button class="text-button danger-text" data-delete-account="${escapeHtml(account.id)}">删除</button></span>
+          </div>
+        `).join("")}
+      </div>
+      <p class="muted-copy">科目导入支持包含“科目编码、科目名称”的 CSV、TXT、XLS、XLSX；“方向”列可选。</p>
+    </section>
   `;
 }
 
@@ -714,6 +749,7 @@ function systemsPage() {
         ${environmentCard({ compact: true })}
         ${updateCard()}
       </section>
+      ${accountMasterDataPanel()}
       ${readonlyWorkspaceEmpty("尚未选择目标 ERP")}
     `;
   }
@@ -741,6 +777,7 @@ function systemsPage() {
         <label class="secondary-button file-label">${icon("upload")}选择模板<input data-target-template type="file" accept=".csv,.xlsx" hidden /></label>
       </article>
     </section>
+    ${accountMasterDataPanel()}
   `;
 }
 
@@ -900,12 +937,12 @@ function importPage() {
     </section>
     <section class="import-grid">
       <article class="drop-panel glass-panel">
-        <input id="file-input" type="file" multiple accept=".csv,.xml,.xbrl,.ofd,.xlsx,.pdf,.png,.jpg,.jpeg" hidden />
+        <input id="file-input" type="file" multiple accept=".csv,.txt,.xls,.xlsx,.xml,.xbrl,.ofd,.pdf,.png,.jpg,.jpeg" hidden />
         <input id="folder-input" type="file" multiple webkitdirectory directory hidden />
         <div class="drop-zone" data-drop-zone>
           <span>${icon("upload")}</span>
           <h2>拖入文件，或点击选择</h2>
-          <p>CSV、XLSX 和通用字段型 XML 可直接生成事项；PDF 与图片先安全归档，再由本地 OCR 生成候选字段供人工确认。</p>
+          <p>CSV、TXT、XLS、XLSX 和通用字段型 XML 可直接生成事项；PDF 与图片先安全归档，再由本地 OCR 生成候选字段供人工确认。</p>
           <div class="drop-actions"><button class="primary-button" data-choose-files>选择文件</button><button class="secondary-button" data-choose-folder>选择文件夹</button></div>
         </div>
         <div class="privacy-note">${icon("shield")}不会上传云端；文本型 PDF 本地提取，扫描件和图片由本地 OCR 生成候选并等待人工确认。</div>
@@ -1329,6 +1366,9 @@ function queryPage() {
 }
 
 function rulesPage() {
+  const activeAccounts = (state.masterData || [])
+    .filter((item) => item.category === "account" && item.active !== false && item.status !== "停用")
+    .sort((left, right) => String(left.code).localeCompare(String(right.code), "zh-CN"));
   const editingRule = editingRuleId
     ? state.rules.find((rule) => rule.id === editingRuleId)
     : null;
@@ -1356,11 +1396,13 @@ function rulesPage() {
           <label><span>优先级 *</span><input data-rule-priority type="number" min="1" max="999" value="${formRule.priority}" /></label>
           <label><span>业务类型 *</span><select data-rule-business-type>${["采购付款", "差旅报销", "销售收款", "员工薪酬"].map((value) => `<option value="${value}" ${formRule.match?.businessType === value ? "selected" : ""}>${value}</option>`).join("")}</select></label>
           <label><span>限定供应商 / 客商</span><input data-rule-counterparty value="${escapeHtml(formRule.match?.counterparty || "")}" placeholder="留空表示该业务类型全部适用" /></label>
-          <label><span>借方科目编码 *</span><input data-rule-debit-code value="${escapeHtml(formRule.posting?.debitAccountCode)}" /></label>
-          <label><span>借方科目名称 *</span><input data-rule-debit-name value="${escapeHtml(formRule.posting?.debitAccountName)}" /></label>
-          <label><span>贷方科目编码 *</span><input data-rule-credit-code value="${escapeHtml(formRule.posting?.creditAccountCode)}" /></label>
-          <label><span>贷方科目名称 *</span><input data-rule-credit-name value="${escapeHtml(formRule.posting?.creditAccountName)}" /></label>
+          <label><span>借方科目编码 *</span><input data-rule-debit-code list="account-code-options" value="${escapeHtml(formRule.posting?.debitAccountCode)}" /></label>
+          <label><span>借方科目名称 *</span><input data-rule-debit-name list="account-name-options" value="${escapeHtml(formRule.posting?.debitAccountName)}" /></label>
+          <label><span>贷方科目编码 *</span><input data-rule-credit-code list="account-code-options" value="${escapeHtml(formRule.posting?.creditAccountCode)}" /></label>
+          <label><span>贷方科目名称 *</span><input data-rule-credit-name list="account-name-options" value="${escapeHtml(formRule.posting?.creditAccountName)}" /></label>
         </div>
+        <datalist id="account-code-options">${activeAccounts.map((account) => `<option value="${escapeHtml(account.code)}">${escapeHtml(account.name)}</option>`).join("")}</datalist>
+        <datalist id="account-name-options">${activeAccounts.map((account) => `<option value="${escapeHtml(account.name)}">${escapeHtml(account.code)}</option>`).join("")}</datalist>
         <div class="rule-editor-actions"><button class="quiet-button" data-cancel-rule>取消</button><button class="primary-button" data-save-rule>${icon("check")}${editingRule ? "保存待确认新版本" : "保存为待启用 v1.0"}</button></div>
       </section>
     ` : ""}
@@ -1393,6 +1435,8 @@ function connectorsPage() {
   }
   const connector = connectorItems.find((item) => item.id === selectedConnectorId);
   const isFeishu = connector.adapter === "feishu-approval-v4";
+  const isOaJson = connector.adapter === "oa-json-api";
+  const isWorkflow = connector.type === "workflow";
   const isKingdee = connector.adapter === "kingdee-k3cloud-webapi-v6";
   const isConfiguredVendor = ["yonyou-u8-openapi-v12", "inspur-gscloud-igix"].includes(connector.adapter);
   const statusLabel = {
@@ -1414,7 +1458,7 @@ function connectorsPage() {
       </aside>
       <article class="connector-detail">
         <header class="connector-detail-header">
-          <div class="connector-detail-identity"><span class="connector-detail-icon">${icon(connector.type === "finance" ? "voucher" : "briefcase")}</span><div><div class="connector-detail-meta"><span>${connector.type === "finance" ? "目标 ERP" : "数据来源"}</span><span>${escapeHtml(connector.environment)}</span><span class="connector-state ${connector.status === "connected" ? "success" : "pending"}"><i></i>${statusLabel}</span></div><h2>${escapeHtml(connector.name)}</h2><p>${isFeishu ? "只接收状态明确为 APPROVED 的审批实例。" : "只保存凭证草稿并回查真实外部编号；不提交、审核或过账。"}</p></div></div>
+          <div class="connector-detail-identity"><span class="connector-detail-icon">${icon(connector.type === "finance" ? "voucher" : "briefcase")}</span><div><div class="connector-detail-meta"><span>${connector.type === "finance" ? "目标 ERP" : "数据来源"}</span><span>${escapeHtml(connector.environment)}</span><span class="connector-state ${connector.status === "connected" ? "success" : "pending"}"><i></i>${statusLabel}</span></div><h2>${escapeHtml(connector.name)}</h2><p>${isWorkflow ? "通过只读 API 获取 JSON，原始响应本地归档后再按映射生成业务事项。" : "只保存凭证草稿并回查真实外部编号；不提交、审核或过账。"}</p></div></div>
           <div class="connector-header-actions"><button class="secondary-button" data-test-real="${connector.id}">${icon("refresh")}测试连接</button><button class="primary-button" data-save-connector="${connector.id}">${icon("check")}保存配置</button></div>
         </header>
         <form class="connector-form connector-detail-form" data-connector-form="${connector.id}">
@@ -1425,6 +1469,12 @@ function connectorsPage() {
                 <label><span>App ID</span><input name="appId" value="${escapeHtml(connector.appId || "")}" required /></label>
                 <label><span>App Secret（系统密钥库）</span><input name="secret" type="password" autocomplete="new-password" /></label>
                 <label><span>审批定义 Code</span><input name="approvalCode" value="${escapeHtml(connector.approvalCode || "")}" required /></label>
+              ` : isOaJson ? `
+                <label><span>OA 系统名称</span><input name="providerName" value="${escapeHtml(connector.providerName || "")}" placeholder="例如：企业微信、钉钉或自建 OA" required /></label>
+                <label><span>JSON API 地址</span><input name="baseUrl" value="${escapeHtml(connector.baseUrl || "")}" placeholder="https://.../approved-records" required /></label>
+                <label><span>访问密钥（系统密钥库）</span><input name="secret" type="password" autocomplete="new-password" /></label>
+                <label><span>鉴权请求头</span><input name="authHeader" value="${escapeHtml(connector.authHeader || "Authorization")}" required /></label>
+                <label><span>鉴权前缀</span><input name="authScheme" value="${escapeHtml(connector.authScheme || "Bearer")}" placeholder="Bearer；不需要可留空" /></label>
               ` : `
                 <label><span>API 地址</span><input name="baseUrl" value="${escapeHtml(connector.baseUrl || "")}" placeholder="https://..." required /></label>
                 <label><span>账套 / 数据中心 ID</span><input name="accountId" value="${escapeHtml(connector.accountId || "")}" required /></label>
@@ -1438,12 +1488,23 @@ function connectorsPage() {
           <section class="connector-config-section">
             <label class="check-row connector-permission-row"><input name="leastPrivilegeConfirmed" type="checkbox" ${connector.leastPrivilegeConfirmed ? "checked" : ""} />使用专用最小权限账号，并确认连接器没有提交、审核、过账或结账权限</label>
           </section>
-          ${isFeishu ? `<section class="connector-config-section"><div class="connector-section-heading"><div><h3>审批字段映射</h3><p>控件 ID 必须来自客户实际审批定义。</p></div></div><div class="connector-field-grid"><label><span>业务日期</span><input name="mapDate" value="${escapeHtml(connector.fieldMapping?.date || "")}" /></label><label><span>供应商 / 客商</span><input name="mapCounterparty" value="${escapeHtml(connector.fieldMapping?.counterparty || "")}" /></label><label><span>金额</span><input name="mapAmount" value="${escapeHtml(connector.fieldMapping?.amount || "")}" /></label><label><span>审批单号</span><input name="mapReference" value="${escapeHtml(connector.fieldMapping?.reference || "")}" /></label></div></section>` : ""}
+          ${isWorkflow ? `<section class="connector-config-section"><div class="connector-section-heading"><div><h3>${isOaJson ? "JSON 记录与字段映射" : "审批字段映射"}</h3><p>${isOaJson ? "路径使用点号访问嵌套字段，例如 data.items、applicant.name。" : "控件 ID 必须来自客户实际审批定义。"}</p></div></div><div class="connector-field-grid">
+            ${isOaJson ? `
+              <label><span>记录数组路径</span><input name="recordsPath" value="${escapeHtml(connector.recordsPath || "data.items")}" required /></label>
+              <label><span>记录唯一 ID 路径</span><input name="externalIdPath" value="${escapeHtml(connector.externalIdPath || "id")}" required /></label>
+              <label><span>审批状态路径</span><input name="approvalStatusPath" value="${escapeHtml(connector.approvalStatusPath || "status")}" /></label>
+              <label><span>已通过状态值</span><input name="approvedValues" value="${escapeHtml((connector.approvedValues || []).join(", "))}" placeholder="APPROVED, approved, 已通过" /></label>
+            ` : ""}
+            <label><span>业务日期${isOaJson ? "路径" : ""}</span><input name="mapDate" value="${escapeHtml(connector.fieldMapping?.date || "")}" /></label>
+            <label><span>供应商 / 客商${isOaJson ? "路径" : ""}</span><input name="mapCounterparty" value="${escapeHtml(connector.fieldMapping?.counterparty || "")}" /></label>
+            <label><span>金额${isOaJson ? "路径" : ""}</span><input name="mapAmount" value="${escapeHtml(connector.fieldMapping?.amount || "")}" /></label>
+            <label><span>审批单号${isOaJson ? "路径" : ""}</span><input name="mapReference" value="${escapeHtml(connector.fieldMapping?.reference || "")}" /></label>
+          </div></section>` : ""}
           ${isConfiguredVendor ? `<section class="connector-config-section"><div class="connector-section-heading"><div><h3>版本化接口模型</h3><p>必须粘贴客户官方接口包对应的端点、字段和辅助核算映射；系统不会猜测厂商字段。</p></div></div><div class="connector-field-grid"><label class="wide-field"><span>端点配置 JSON</span><textarea name="endpointProfile" rows="8">${escapeHtml(JSON.stringify(connector.endpointProfile || {}, null, 2))}</textarea></label><label class="wide-field"><span>字段配置 JSON</span><textarea name="fieldProfile" rows="8">${escapeHtml(JSON.stringify(connector.fieldProfile || {}, null, 2))}</textarea></label><label class="wide-field"><span>辅助核算字段映射 JSON</span><textarea name="dimensionFieldMap" rows="5">${escapeHtml(JSON.stringify(connector.dimensionFieldMap || {}, null, 2))}</textarea></label></div></section>` : ""}
           ${isKingdee ? `<section class="connector-config-section"><div class="connector-section-heading"><div><h3>金蝶辅助核算映射</h3><p>所有实际维度必须映射到目标字段，否则推送预检失败。</p></div></div><label class="wide-field"><span>辅助核算字段映射 JSON</span><textarea name="dimensionFieldMap" rows="5">${escapeHtml(JSON.stringify(connector.dimensionFieldMap || {}, null, 2))}</textarea></label></section>` : ""}
           ${probeChecks ? `<section class="connector-config-section"><div class="connector-section-heading"><div><h3>最近连接检查</h3></div></div><ul class="probe-checks connector-probe-list">${probeChecks}</ul></section>` : ""}
         </form>
-        <footer class="connector-detail-footer"><p>${icon("shield")}任何系统均只保存草稿，不自动提交、审核或过账。</p><div>${isFeishu ? `<button class="secondary-button" data-sync-approvals="${connector.id}" ${connector.status !== "connected" ? "disabled" : ""}>同步已审批单据</button>` : `<button class="secondary-button" data-sync-master="${connector.id}" ${connector.status !== "connected" ? "disabled" : ""}>同步基础资料</button>`}<button class="quiet-button" data-activate-${isFeishu ? "workflow" : "finance"}="${connector.id}">设为当前${isFeishu ? "来源" : "目标"}</button></div></footer>
+        <footer class="connector-detail-footer"><p>${icon("shield")}任何系统均只读获取来源数据；凭证目标只保存草稿，不自动提交、审核或过账。</p><div>${isWorkflow ? `<button class="secondary-button" data-sync-approvals="${connector.id}" ${connector.status !== "connected" ? "disabled" : ""}>同步 OA 数据</button>` : `<button class="secondary-button" data-sync-master="${connector.id}" ${connector.status !== "connected" ? "disabled" : ""}>同步基础资料</button>`}<button class="quiet-button" data-activate-${isWorkflow ? "workflow" : "finance"}="${connector.id}">设为当前${isWorkflow ? "来源" : "目标"}</button></div></footer>
       </article>
     </section>
   `;
@@ -1837,9 +1898,10 @@ function toast(message, tone = "success") {
 function fileKind(name) {
   const extension = name.split(".").pop()?.toLowerCase();
   if (extension === "csv") return { kind: "结构化表格", action: "解析字段并创建业务事项" };
+  if (extension === "txt") return { kind: "分隔文本", action: "按逗号、分号、制表符或竖线解析" };
   if (extension === "xml") return { kind: "结构化 XML", action: "归档并提取基础元数据" };
   if (extension === "xlsx") return { kind: "Excel", action: "解析字段并创建业务事项" };
-  if (extension === "xls") return { kind: "旧版 Excel", action: "不支持" };
+  if (extension === "xls") return { kind: "旧版 Excel", action: "解析字段并创建业务事项" };
   if (extension === "pdf") return { kind: "PDF", action: "归档并尝试提取文本" };
   if (["png", "jpg", "jpeg"].includes(extension)) return { kind: "图片", action: "本地 OCR 生成候选并等待人工确认" };
   return { kind: "未知格式", action: "不支持" };
@@ -1851,7 +1913,7 @@ async function addFiles(files) {
   fieldMapping = {};
   mappingTemplateName = "";
   render();
-  if (pendingFiles.length === 1 && /\.(csv|xlsx)$/i.test(pendingFiles[0].file.name)) {
+  if (pendingFiles.length === 1 && /\.(csv|txt|xls|xlsx)$/i.test(pendingFiles[0].file.name)) {
     try {
       importPreview = await previewImportFile(pendingFiles[0].file);
       fieldMapping = { ...importPreview.suggestedMapping };
@@ -2281,10 +2343,8 @@ async function saveConnectorConfiguration(connectorId) {
   let secretName;
   const connector = state.connectors.find((item) => item.id === connectorId);
   if (!connector) return toast("连接器不存在", "warning");
-  if (connector.adapter === "feishu-approval-v4") {
+  if (connector.adapter === "feishu-approval-v4" || connector.adapter === "oa-json-api") {
     config = {
-      appId: String(values.appId || "").trim(),
-      approvalCode: String(values.approvalCode || "").trim(),
       environment: values.environment,
       leastPrivilegeConfirmed: values.leastPrivilegeConfirmed === "on",
       fieldMapping: {
@@ -2294,7 +2354,26 @@ async function saveConnectorConfiguration(connectorId) {
         reference: String(values.mapReference || "").trim(),
       },
     };
-    secretName = "app_secret";
+    if (connector.adapter === "feishu-approval-v4") {
+      config.appId = String(values.appId || "").trim();
+      config.approvalCode = String(values.approvalCode || "").trim();
+      secretName = "app_secret";
+    } else {
+      Object.assign(config, {
+        providerName: String(values.providerName || "").trim(),
+        baseUrl: String(values.baseUrl || "").trim().replace(/\/+$/, ""),
+        authHeader: String(values.authHeader || "Authorization").trim(),
+        authScheme: String(values.authScheme || "").trim(),
+        recordsPath: String(values.recordsPath || "").trim(),
+        externalIdPath: String(values.externalIdPath || "id").trim(),
+        approvalStatusPath: String(values.approvalStatusPath || "").trim(),
+        approvedValues: String(values.approvedValues || "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+      });
+      secretName = "access_token";
+    }
   } else {
     config = {
       baseUrl: String(values.baseUrl || "").trim().replace(/\/+$/, ""),
@@ -2429,21 +2508,45 @@ function attachEvents() {
   document.querySelectorAll("[data-route]:not([data-section-toggle])").forEach((element) => {
     element.addEventListener("click", () => navigate(element.dataset.route));
   });
+  const sourceMultiselect = document.querySelector("[data-source-multiselect]");
+  const updateSourceSummary = () => {
+    if (!sourceMultiselect) return;
+    const checked = [...sourceMultiselect.querySelectorAll('input[name="sourceSystemIds"]:checked')];
+    const labels = checked.map((input) => input.dataset.sourceLabel);
+    const summary = sourceMultiselect.querySelector("[data-source-summary]");
+    if (summary) summary.textContent = labels.length ? labels.join("、") : "请选择";
+  };
+  sourceMultiselect?.querySelectorAll('input[name="sourceSystemIds"]').forEach((input) => {
+    input.addEventListener("change", updateSourceSummary);
+  });
+  sourceMultiselect?.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !sourceMultiselect.open) return;
+    sourceMultiselect.open = false;
+    sourceMultiselect.querySelector("summary")?.focus();
+  });
+  if (sourceMultiselectDocumentHandler) {
+    document.removeEventListener("click", sourceMultiselectDocumentHandler);
+  }
+  sourceMultiselectDocumentHandler = (event) => {
+    if (sourceMultiselect?.open && !sourceMultiselect.contains(event.target)) {
+      sourceMultiselect.open = false;
+    }
+  };
+  document.addEventListener("click", sourceMultiselectDocumentHandler);
   document.querySelector("[data-setup-plan]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     if (!form.reportValidity()) return;
     const data = new FormData(form);
+    const sourceSystemIds = data.getAll("sourceSystemIds");
+    if (!sourceSystemIds.length) {
+      if (sourceMultiselect) sourceMultiselect.open = true;
+      sourceMultiselect?.querySelector("summary")?.focus();
+      return toast("至少选择一个数据来源", "warning");
+    }
     const payload = {
-      enterprise: Object.fromEntries(
-        ["name", "legalEntity", "accountSet", "ledger", "accountingStandard", "baseCurrency", "voucherType", "operator"]
-          .map((name) => [name, String(data.get(name) || "").trim()]),
-      ),
       targetSystemId: String(data.get("targetSystemId") || ""),
-      targetVersion: String(data.get("targetVersion") || ""),
-      deployment: String(data.get("deployment") || ""),
-      sourceSystemIds: data.getAll("sourceSystemIds"),
-      businessScenarios: data.getAll("businessScenarios"),
+      sourceSystemIds,
     };
     try {
       const result = await generateSetupPlan(payload);
@@ -2473,7 +2576,7 @@ function attachEvents() {
       const validated = await validateTargetTemplate({
         name,
         targetSystemId: state.targetSystem.id,
-        version: state.targetSystem.selectedVersion,
+        version: state.targetSystem.versions?.[0] || "",
         headers: preview.headers,
         headerFingerprint: preview.headerFingerprint,
         requiredColumns: requiredText.split(",").map((item) => item.trim()).filter(Boolean),
@@ -2484,6 +2587,101 @@ function attachEvents() {
       state = validated.state;
       render();
       toast(validated.ok ? "模板档案已建立，仍需测试账套导入" : validated.errors.join("；"), validated.ok ? "success" : "warning");
+    } catch (error) {
+      toast(error.message, "warning");
+    }
+  });
+  document.querySelector("[data-add-account]")?.addEventListener("click", () => {
+    const code = window.prompt("请输入科目编码：", "")?.trim();
+    if (!code) return;
+    const activeAccounts = (state.masterData || []).filter(
+      (item) => item.category === "account" && item.active !== false,
+    );
+    if (activeAccounts.some((item) => item.code === code)) {
+      return toast("该科目编码已经存在，请直接修改现有科目", "warning");
+    }
+    const name = window.prompt("请输入科目名称：", "")?.trim();
+    if (!name) return;
+    const now = new Date().toISOString();
+    state.masterData.push({
+      id: `MD-ACCOUNT-${Date.now()}`,
+      category: "account",
+      categoryLabel: "科目",
+      code,
+      name,
+      group: "",
+      normalBalance: "借",
+      status: "启用",
+      requiredDimensions: [],
+      version: 1,
+      active: true,
+      source: "用户新增",
+      editedAt: now,
+    });
+    appendAudit(state, "新增科目", `${code} ${name}`, "创建用户维护的科目版本 v1");
+    saveState(state);
+    render();
+    toast(`已新增科目 ${code} ${name}`);
+  });
+  document.querySelectorAll("[data-save-account]").forEach((element) => {
+    element.addEventListener("click", () => {
+      const original = (state.masterData || []).find((item) => item.id === element.dataset.saveAccount);
+      const row = element.closest("[data-account-row]");
+      if (!original || !row) return;
+      const field = (name) => row.querySelector(`[data-account-field="${name}"]`)?.value.trim() || "";
+      const code = field("code");
+      const name = field("name");
+      if (!code || !name) return toast("科目编码和科目名称不能为空", "warning");
+      const duplicate = (state.masterData || []).find((item) =>
+        item.id !== original.id
+        && item.category === "account"
+        && item.active !== false
+        && item.code === code);
+      if (duplicate) return toast("启用科目中已经存在相同编码", "warning");
+      const now = new Date().toISOString();
+      original.active = false;
+      original.supersededAt = now;
+      const updated = {
+        ...original,
+        id: `MD-ACCOUNT-${Date.now()}`,
+        code,
+        name,
+        group: field("group"),
+        normalBalance: field("normalBalance"),
+        status: field("status"),
+        version: Number(original.version || 0) + 1,
+        active: true,
+        source: "用户修改",
+        editedAt: now,
+        supersedesMasterDataId: original.id,
+      };
+      delete updated.supersededAt;
+      state.masterData.push(updated);
+      appendAudit(state, "修改科目", `${code} ${name}`, `保留原版本并创建 v${updated.version}`);
+      saveState(state);
+      render();
+      toast(`科目 ${code} 已保存为 v${updated.version}`);
+    });
+  });
+  document.querySelectorAll("[data-delete-account]").forEach((element) => {
+    element.addEventListener("click", () => {
+      const account = (state.masterData || []).find((item) => item.id === element.dataset.deleteAccount);
+      if (!account || !window.confirm(`确认停用并移除科目 ${account.code} ${account.name}？历史版本仍会保留。`)) return;
+      account.active = false;
+      account.supersededAt = new Date().toISOString();
+      appendAudit(state, "删除科目", `${account.code} ${account.name}`, `停用科目版本 v${account.version || 1}`);
+      saveState(state);
+      render();
+      toast(`已移除科目 ${account.code}`);
+    });
+  });
+  document.querySelector("[data-restore-default-accounts]")?.addEventListener("click", async () => {
+    if (!window.confirm("恢复默认科目会停用当前全部科目版本，再载入《小企业会计准则》默认表。历史版本仍会保留。是否继续？")) return;
+    try {
+      const result = await restoreDefaultAccounts();
+      state = result.state;
+      render();
+      toast(`已恢复 ${result.count} 个默认科目`);
     } catch (error) {
       toast(error.message, "warning");
     }
@@ -2773,6 +2971,19 @@ function attachEvents() {
     editingRuleId = null;
     render();
   });
+  [
+    ["[data-rule-debit-code]", "[data-rule-debit-name]"],
+    ["[data-rule-credit-code]", "[data-rule-credit-name]"],
+  ].forEach(([codeSelector, nameSelector]) => {
+    document.querySelector(codeSelector)?.addEventListener("change", (event) => {
+      const account = (state.masterData || []).find((item) =>
+        item.category === "account"
+        && item.active !== false
+        && item.status !== "停用"
+        && item.code === event.target.value.trim());
+      if (account) document.querySelector(nameSelector).value = account.name;
+    });
+  });
   document.querySelector("[data-save-rule]")?.addEventListener("click", () => {
     const name = document.querySelector("[data-rule-name]")?.value.trim();
     const businessType = document.querySelector("[data-rule-business-type]")?.value.trim();
@@ -2908,7 +3119,7 @@ function attachEvents() {
         if (result.environment) environmentStatus = result.environment;
         applyBrowserCapabilityChecks();
         render();
-        toast(result.restartRequired ? "修复完成，重启后生效" : "环境修复已完成");
+        toast(result.message || (result.restartRequired ? "修复完成，重启后生效" : "环境修复已完成"));
       } catch (error) {
         toast(error.message, "warning");
       }

@@ -12,6 +12,8 @@ from .connectors import (
     ConnectorError,
     FeishuApprovalConnector,
     KingdeeK3CloudConnector,
+    OaJsonApiConnector,
+    json_path_value,
 )
 from .database import Database, utc_now
 from .importers import STANDARD_FIELDS, event_from_row
@@ -45,6 +47,11 @@ ALLOWED_CONFIG_FIELDS = {
     "dimensionFieldMap",
     "authHeader",
     "authScheme",
+    "providerName",
+    "recordsPath",
+    "externalIdPath",
+    "approvalStatusPath",
+    "approvedValues",
     "enabled",
     "leastPrivilegeConfirmed",
 }
@@ -178,6 +185,8 @@ class ConnectorService:
             return factory(config)
         if config["adapter"] == "feishu-approval-v4":
             return FeishuApprovalConnector(config, self._secret(config["id"], "app_secret"))
+        if config["adapter"] == "oa-json-api":
+            return OaJsonApiConnector(config, self._secret(config["id"], "access_token"))
         if config["adapter"] == "kingdee-k3cloud-webapi-v6":
             return KingdeeK3CloudConnector(config, self._secret(config["id"], "password"))
         if config["adapter"] in {"yonyou-u8-openapi-v12", "inspur-gscloud-igix"}:
@@ -297,8 +306,8 @@ class ConnectorService:
         state = self._state()
         config = self._config(state, connector_id)
         self._assert_connected_and_locked(config)
-        if "approval_incremental_sync" not in config.get("capabilities", []):
-            raise ValueError("连接器未探测到审批增量同步能力")
+        if not {"approval_incremental_sync", "json_record_sync"}.intersection(config.get("capabilities", [])):
+            raise ValueError("连接器未探测到 OA JSON 同步能力")
         adapter = self._adapter(config)
         cursor = config.get("syncCursor")
         approved_items: list[dict[str, Any]] = []
@@ -313,11 +322,17 @@ class ConnectorService:
         created = 0
         skipped = 0
         for instance in approved_items:
+            is_feishu = config.get("adapter") == "feishu-approval-v4"
+            source_system = "feishu" if is_feishu else config["id"]
             external_id = str(
-                instance.get("instance_code")
-                or instance.get("instance_id")
-                or instance.get("code")
-                or ""
+                (
+                    instance.get("instance_code")
+                    or instance.get("instance_id")
+                    or instance.get("code")
+                    or ""
+                )
+                if is_feishu
+                else json_path_value(instance, str(config.get("externalIdPath") or "id"), "")
             )
             if not external_id:
                 skipped += 1
@@ -325,7 +340,7 @@ class ConnectorService:
             existing = next(
                 (
                     event for event in state.get("events", [])
-                    if event.get("sourceSystem") == "feishu"
+                    if event.get("sourceSystem") == source_system
                     and event.get("externalId") == external_id
                 ),
                 None,
@@ -335,21 +350,29 @@ class ConnectorService:
                 existing["lastSyncedAt"] = utc_now()
                 skipped += 1
                 continue
-            values = parse_feishu_form(instance)
             mapping = config.get("fieldMapping") or {}
             row: dict[str, Any] = {}
-            for standard_field, widget_id in mapping.items():
+            values = parse_feishu_form(instance) if is_feishu else instance
+            for standard_field, source_path in mapping.items():
                 canonical = STANDARD_FIELDS.get(standard_field)
                 if canonical:
-                    row[canonical] = values.get(str(widget_id), "")
+                    row[canonical] = (
+                        values.get(str(source_path), "")
+                        if is_feishu
+                        else json_path_value(values, str(source_path), "")
+                    )
             row.setdefault("业务日期", datetime.now(timezone.utc).date().isoformat())
             row.setdefault("审批单号", external_id)
             row.setdefault("业务类型", config.get("businessType") or "采购付款")
             document = self._archive_json_response(
                 state,
-                name=f"飞书审批_{external_id}.json",
-                document_type="飞书审批原始响应",
-                source_system="feishu",
+                name=(
+                    f"飞书审批_{external_id}.json"
+                    if is_feishu
+                    else f"{config.get('providerName') or config.get('name')}_{external_id}.json"
+                ),
+                document_type="飞书审批原始响应" if is_feishu else "OA API JSON 原始响应",
+                source_system=source_system,
                 payload=instance,
                 external_id=external_id,
             )
@@ -366,7 +389,7 @@ class ConnectorService:
                     "documentIds": [document_id],
                     "type": "流程字段映射缺失",
                     "severity": "阻断",
-                    "title": f"飞书审批 {external_id} 无法创建业务事项",
+                    "title": f"OA 记录 {external_id} 无法创建业务事项",
                     "detail": str(exc),
                     "suggestion": "在连接器中完成日期、供应商、金额和审批单号字段映射后重新同步。",
                     "status": "待处理",
@@ -374,7 +397,7 @@ class ConnectorService:
                 skipped += 1
             else:
                 event.update({
-                    "sourceSystem": "feishu",
+                    "sourceSystem": source_system,
                     "externalId": external_id,
                     "approvalStatus": "approved",
                     "sourceVerified": True,

@@ -120,6 +120,90 @@ def normalize_base_url(value: str, *, production: bool) -> str:
     return url
 
 
+def json_path_value(payload: Any, path: str, default: Any = None) -> Any:
+    current = payload
+    for part in (segment for segment in str(path or "").split(".") if segment):
+        if isinstance(current, dict):
+            current = current.get(part, default)
+        elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
+            current = current[int(part)]
+        else:
+            return default
+    return current
+
+
+class OaJsonApiConnector:
+    """Read-only adapter for OA APIs that expose approval records as JSON."""
+
+    connector_type = "oa-json-api"
+    capabilities = ("json_record_sync", "field_mapping")
+
+    def __init__(
+        self,
+        config: dict[str, Any],
+        access_token: str,
+        transport: Transport | None = None,
+    ) -> None:
+        self.config = config
+        self.access_token = access_token
+        self.transport = transport or JsonHttpTransport()
+        self.url = normalize_base_url(
+            str(config.get("baseUrl") or ""),
+            production=config.get("environment") == "生产环境",
+        )
+
+    def _headers(self) -> dict[str, str]:
+        if not self.access_token:
+            raise ConnectorError("SECRET_MISSING", "OA API 访问密钥尚未保存到系统密钥库", "configuration")
+        header = str(self.config.get("authHeader") or "Authorization").strip()
+        scheme = str(self.config["authScheme"] if "authScheme" in self.config else "Bearer").strip()
+        value = f"{scheme} {self.access_token}".strip()
+        return {header: value}
+
+    def _records(self, body: Any) -> list[dict[str, Any]]:
+        records = json_path_value(body, str(self.config.get("recordsPath") or ""), body)
+        if not isinstance(records, list):
+            raise ConnectorError(
+                "JSON_RECORDS_PATH_INVALID",
+                "记录路径没有指向 JSON 数组，请检查接口响应与记录路径",
+                "configuration",
+            )
+        return [item for item in records if isinstance(item, dict)]
+
+    def probe(self) -> dict[str, Any]:
+        started = time.monotonic()
+        status, body, headers = self.transport.request("GET", self.url, headers=self._headers())
+        if status < 200 or status >= 300:
+            raise ConnectorError("OA_API_ERROR", f"OA API 返回 HTTP {status}", "remote_error")
+        records = self._records(body)
+        return {
+            "ok": True,
+            "latencyMs": round((time.monotonic() - started) * 1000),
+            "identity": {"provider": self.config.get("providerName") or "通用 OA"},
+            "scope": {
+                "recordsPath": self.config.get("recordsPath") or "",
+                "sampleCount": len(records),
+            },
+            "capabilities": list(self.capabilities),
+            "requestId": headers.get("X-Request-Id") or headers.get("x-request-id"),
+            "serverTimeChecked": True,
+        }
+
+    def sync_approved_instances(self, _cursor: dict[str, Any] | None = None) -> dict[str, Any]:
+        status, body, _headers = self.transport.request("GET", self.url, headers=self._headers())
+        if status < 200 or status >= 300:
+            raise ConnectorError("OA_API_ERROR", f"OA API 返回 HTTP {status}", "remote_error")
+        records = self._records(body)
+        status_path = str(self.config.get("approvalStatusPath") or "").strip()
+        approved_values = {str(item) for item in self.config.get("approvedValues") or []}
+        if status_path and approved_values:
+            records = [
+                item for item in records
+                if str(json_path_value(item, status_path, "")) in approved_values
+            ]
+        return {"items": records, "cursor": {}, "hasMore": False}
+
+
 class FeishuApprovalConnector:
     connector_type = "feishu-approval-v4"
     capabilities = ("approval_incremental_sync", "approval_instance_query")

@@ -59,8 +59,10 @@ STANDARD_FIELDS = {
 
 def parse_rows(filename: str, content: bytes) -> list[dict[str, Any]]:
     suffix = Path(filename).suffix.lower()
-    if suffix == ".csv":
-        return parse_csv(content)
+    if suffix in {".csv", ".txt"}:
+        return parse_delimited_text(content)
+    if suffix == ".xls":
+        return parse_xls(content)
     if suffix == ".xlsx":
         return parse_xlsx(content)
     if suffix == ".xml":
@@ -109,10 +111,49 @@ def apply_mapping(row: dict[str, Any], mapping: dict[str, str] | None) -> dict[s
 
 
 def parse_csv(content: bytes) -> list[dict[str, str]]:
+    return parse_delimited_text(content)
+
+
+def parse_delimited_text(content: bytes) -> list[dict[str, str]]:
     text = decode_text(content)
     sample = text[:4096]
-    dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+    except csv.Error as exc:
+        raise ValueError("文本文件必须使用逗号、分号、制表符或竖线分隔列") from exc
     return [dict(row) for row in csv.DictReader(io.StringIO(text), dialect=dialect)]
+
+
+def parse_xls(content: bytes) -> list[dict[str, Any]]:
+    try:
+        import xlrd
+    except ImportError as exc:
+        raise ValueError("当前运行环境未安装 XLS 解析组件 xlrd") from exc
+    try:
+        workbook = xlrd.open_workbook(file_contents=content, on_demand=True)
+        sheet = workbook.sheet_by_index(0)
+    except (xlrd.XLRDError, IndexError) as exc:
+        raise ValueError("XLS 文件损坏、加密或没有可读取的工作表") from exc
+    if sheet.nrows == 0:
+        return []
+
+    def value_at(row: int, column: int) -> Any:
+        if not hasattr(sheet, "cell"):
+            return sheet.cell_value(row, column)
+        cell = sheet.cell(row, column)
+        if cell.ctype == xlrd.XL_CELL_DATE:
+            return xlrd.xldate_as_datetime(cell.value, workbook.datemode)
+        return cell.value
+
+    headers = [str(value_at(0, column)).strip() for column in range(sheet.ncols)]
+    result = []
+    for row_index in range(1, sheet.nrows):
+        values = [value_at(row_index, column) for column in range(sheet.ncols)]
+        if not any(value not in (None, "") for value in values):
+            continue
+        result.append({header: value for header, value in zip(headers, values) if header})
+    workbook.release_resources()
+    return result
 
 
 def parse_xlsx(content: bytes) -> list[dict[str, Any]]:
@@ -291,4 +332,4 @@ def decode_text(content: bytes) -> str:
             return content.decode(encoding)
         except UnicodeDecodeError:
             continue
-    raise ValueError("无法识别 CSV 文本编码")
+    raise ValueError("无法识别 CSV/TXT 文本编码")

@@ -8,6 +8,12 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from .defaults import (
+    DEFAULT_ACCOUNT_SOURCE,
+    default_account_master_data,
+    initialize_default_accounts,
+)
+
 from .database import Database, utc_now
 from .importers import header_fingerprint, headers_for, parse_rows
 
@@ -81,14 +87,66 @@ CAPABILITY_CATALOG: dict[str, Any] = {
     ],
     "sources": [
         {
+            "id": "feishu-oa-json",
+            "brand": "飞书",
+            "product": "审批 API（JSON）",
+            "versions": ["开放平台"],
+            "adapter": "oa-json-api",
+            "modes": ["api"],
+            "verification": "configuration-required",
+            "capabilities": ["probe", "json_incremental_sync", "field_mapping"],
+        },
+        {
+            "id": "wecom-oa-json",
+            "brand": "企业微信",
+            "product": "审批 API（JSON）",
+            "versions": ["企业微信 API"],
+            "adapter": "oa-json-api",
+            "modes": ["api"],
+            "verification": "configuration-required",
+            "capabilities": ["probe", "json_incremental_sync", "field_mapping"],
+        },
+        {
+            "id": "dingtalk-oa-json",
+            "brand": "钉钉",
+            "product": "审批 API（JSON）",
+            "versions": ["开放平台"],
+            "adapter": "oa-json-api",
+            "modes": ["api"],
+            "verification": "configuration-required",
+            "capabilities": ["probe", "json_incremental_sync", "field_mapping"],
+        },
+        {
+            "id": "other-oa-json",
+            "brand": "其他 OA",
+            "product": "通用 API（JSON）",
+            "versions": ["客户接口"],
+            "adapter": "oa-json-api",
+            "modes": ["api"],
+            "verification": "configuration-required",
+            "capabilities": ["probe", "json_incremental_sync", "field_mapping"],
+        },
+        {
+            "id": "oa-api-json",
+            "brand": "OA 系统",
+            "product": "API（JSON，旧版配置）",
+            "versions": ["通用"],
+            "adapter": "oa-json-api",
+            "modes": ["api"],
+            "verification": "configuration-required",
+            "capabilities": ["probe", "json_incremental_sync", "field_mapping"],
+            "hidden": True,
+        },
+        {
             "id": "feishu-approval",
             "brand": "飞书",
-            "product": "审批",
+            "product": "审批（旧版专用连接）",
             "versions": ["v4"],
             "adapter": "feishu-approval-v4",
             "modes": ["api"],
             "verification": "contract-tested",
             "capabilities": ["probe", "approval_incremental_sync"],
+            "hidden": True,
         },
         {
             "id": "local-files",
@@ -115,7 +173,6 @@ def empty_production_state() -> dict[str, Any]:
         "enterpriseProfiles": [],
         "targetSystem": None,
         "sourceSystems": [],
-        "businessScenarios": [],
         "flowPlan": None,
         "readiness": {
             "plan": {"status": "not_ready", "validatedAt": None, "reasons": ["尚未生成接入方案"]},
@@ -145,7 +202,9 @@ def empty_production_state() -> dict[str, Any]:
         "exceptions": [],
         "rules": [],
         "connectors": [],
-        "masterData": [],
+        "masterData": default_account_master_data(),
+        "defaultAccountsInitialized": True,
+        "defaultAccountSource": dict(DEFAULT_ACCOUNT_SOURCE),
         "mappingTemplates": [],
         "auditLog": [],
         "syncLog": [],
@@ -169,6 +228,8 @@ def ensure_state_v2(state: dict[str, Any]) -> bool:
     if state.get("version") != STATE_VERSION:
         state["version"] = STATE_VERSION
         changed = True
+    if initialize_default_accounts(state):
+        changed = True
     return changed
 
 
@@ -179,10 +240,11 @@ def connector_template(system_id: str, *, environment: str = "测试环境") -> 
     )
     if not entry or entry["adapter"] in {"file-template", "local-files"}:
         raise ValueError("该系统不需要 API 连接器")
+    source_ids = {item["id"] for item in CAPABILITY_CATALOG["sources"]}
     common = {
         "id": entry["id"],
         "name": f"{entry['brand']} {entry['product']}",
-        "type": "workflow" if system_id == "feishu-approval" else "finance",
+        "type": "workflow" if system_id in source_ids else "finance",
         "adapter": entry["adapter"],
         "environment": environment,
         "status": "not_configured",
@@ -192,6 +254,18 @@ def connector_template(system_id: str, *, environment: str = "测试环境") -> 
     }
     if system_id == "feishu-approval":
         common.update({"appId": "", "approvalCode": "", "fieldMapping": {}, "syncCursor": {}})
+    elif entry["adapter"] == "oa-json-api":
+        common.update({
+            "providerName": entry["brand"] if system_id != "other-oa-json" else "",
+            "recordsPath": "data.items",
+            "externalIdPath": "id",
+            "approvalStatusPath": "status",
+            "approvedValues": ["APPROVED", "approved", "已通过"],
+            "authHeader": "Authorization",
+            "authScheme": "Bearer",
+            "fieldMapping": {},
+            "syncCursor": {},
+        })
     elif system_id == "kingdee-k3cloud":
         common.update({
             "accountId": "",
@@ -246,7 +320,7 @@ def invalidate_if_upstream_changed(existing: dict[str, Any] | None, incoming: di
     if not existing:
         return
     sections = [
-        ("plan", ("enterpriseProfiles", "targetSystem", "sourceSystems", "businessScenarios")),
+        ("plan", ("enterpriseProfiles", "targetSystem", "sourceSystems")),
         ("systems", ("connectors", "masterData", "templateProfiles")),
         ("rules", ("rules",)),
     ]
@@ -271,31 +345,14 @@ class SetupService:
         return state
 
     def plan(self, payload: dict[str, Any]) -> dict[str, Any]:
-        enterprise = payload.get("enterprise") or {}
         target_id = str(payload.get("targetSystemId") or "").strip()
         source_ids = [str(item) for item in payload.get("sourceSystemIds") or []]
-        scenarios = [str(item).strip() for item in payload.get("businessScenarios") or [] if str(item).strip()]
-        required = {
-            "企业名称": enterprise.get("name"),
-            "法人主体": enterprise.get("legalEntity"),
-            "账套": enterprise.get("accountSet"),
-            "账簿": enterprise.get("ledger"),
-            "会计制度": enterprise.get("accountingStandard"),
-            "本位币": enterprise.get("baseCurrency"),
-            "凭证字": enterprise.get("voucherType"),
-            "操作者": enterprise.get("operator"),
-        }
-        missing = [name for name, value in required.items() if not str(value or "").strip()]
-        if missing:
-            raise ValueError(f"接入方案缺少必填项：{'、'.join(missing)}")
         target = next((item for item in CAPABILITY_CATALOG["targets"] if item["id"] == target_id), None)
         if not target:
             raise ValueError("请选择能力目录中的目标系统")
         sources = [item for item in CAPABILITY_CATALOG["sources"] if item["id"] in source_ids]
         if not sources:
             raise ValueError("至少选择一个数据来源")
-        if not scenarios:
-            raise ValueError("至少选择一个自动化业务场景")
 
         mode = "api" if "api" in target["modes"] else "template"
         blockers = []
@@ -311,19 +368,12 @@ class SetupService:
             {"order": 7, "name": "回查", "detail": "取得外部编号并核对幂等引用" if mode == "api" else "记录测试账套导入结果"},
         ]
         state = self._state()
-        state["enterpriseProfiles"] = [{**enterprise, "id": enterprise.get("id") or "enterprise-primary"}]
-        state["company"] = str(enterprise["legalEntity"]).strip()
-        state["ledger"] = str(enterprise["ledger"]).strip()
-        state["operator"] = str(enterprise["operator"]).strip()
-        state["operatorConfigured"] = True
         state["targetSystem"] = {
             **target,
-            "selectedVersion": str(payload.get("targetVersion") or target["versions"][0]),
-            "deployment": str(payload.get("deployment") or "客户环境"),
             "connectionMode": mode,
         }
         state["sourceSystems"] = sources
-        state["businessScenarios"] = scenarios
+        state.pop("businessScenarios", None)
         state["flowPlan"] = {
             "catalogVersion": CAPABILITY_CATALOG["version"],
             "generatedAt": utc_now(),
@@ -347,7 +397,11 @@ class SetupService:
             if system_id not in existing_ids and system_id not in {"local-files", "other-file-target"}:
                 state["connectors"].append(connector_template(system_id))
         state["activeFinanceConnectorId"] = target_id if mode == "api" else ""
-        state["activeWorkflowConnectorId"] = "feishu-approval" if "feishu-approval" in source_ids else ""
+        workflow_connector = next(
+            (item for item in state["connectors"] if item.get("type") == "workflow"),
+            None,
+        )
+        state["activeWorkflowConnectorId"] = workflow_connector.get("id", "") if workflow_connector else ""
         self.database.put_state(state)
         return {"state": state, "plan": state["flowPlan"]}
 
@@ -372,10 +426,10 @@ class SetupService:
         elif not template or template.get("testImportStatus") != "passed":
             system_reasons.append("目标 ERP 模板尚未在测试账套导入成功")
         for source in state.get("sourceSystems", []):
-            if source.get("adapter") == "feishu-approval-v4":
+            if source.get("modes") == ["api"]:
                 connector = next((item for item in state["connectors"] if item.get("id") == source["id"]), None)
                 if not connector or connector.get("status") != "connected":
-                    system_reasons.append("飞书审批连接尚未测试通过")
+                    system_reasons.append(f"{source.get('brand')} {source.get('product')} 连接尚未测试通过")
         if not state.get("masterData"):
             system_reasons.append("尚未导入或同步目标基础资料")
         evidence_labels = {
