@@ -605,12 +605,6 @@ function environmentCard({ compact = false } = {}) {
         ${issues.some((item) => ["disk-space", "core-assets"].includes(item.id))
           ? `<button class="text-button" data-repair-environment="clear-update-cache">清理下载缓存</button>`
           : ""}
-        ${issues.some((item) => item.id === "component-ocr")
-          ? `<button class="text-button" data-repair-environment="reinstall-ocr" ${updateStatus.available ? "" : "disabled"}>安装 OCR 组件</button>`
-          : ""}
-        ${issues.some((item) => item.id === "component-pdf")
-          ? `<button class="text-button" data-repair-environment="reinstall-pdf" ${updateStatus.available ? "" : "disabled"}>安装 PDF 组件</button>`
-          : ""}
         ${compact ? "" : `<button class="text-button" data-repair-environment="recreate-shortcut" ${updateStatus.available ? "" : "disabled"}>重建桌面入口</button>`}
       </div>
       <small>支持编号 ${escapeHtml(environmentStatus.supportCode || "尚未生成")}</small>

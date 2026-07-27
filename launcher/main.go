@@ -15,6 +15,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,8 +30,7 @@ import (
 var (
 	launcherVersion    = "0.1.0-dev"
 	defaultManifestURL = ""
-	defaultChannel     = "stable"
-	releaseContract    = "0.1.0-dev|stable|"
+	releaseContract    = "0.1.0-dev|"
 	manifestPublicKey  = ""
 )
 
@@ -46,47 +46,43 @@ type Package struct {
 }
 
 type Manifest struct {
-	SchemaVersion          int                `json:"schemaVersion"`
-	Channel                string             `json:"channel"`
-	Version                string             `json:"version"`
-	MinimumVersion         string             `json:"minimumVersion"`
-	MinimumLauncherVersion string             `json:"minimumLauncherVersion"`
-	PublishedAt            string             `json:"publishedAt"`
-	RolloutPercentage      int                `json:"rolloutPercentage"`
-	ReleaseNotes           string             `json:"releaseNotes"`
-	Core                   Package            `json:"core"`
-	Components             map[string]Package `json:"components"`
+	SchemaVersion          int     `json:"schemaVersion"`
+	Channel                string  `json:"channel"`
+	Version                string  `json:"version"`
+	MinimumVersion         string  `json:"minimumVersion"`
+	MinimumLauncherVersion string  `json:"minimumLauncherVersion"`
+	PublishedAt            string  `json:"publishedAt"`
+	ReleaseNotes           string  `json:"releaseNotes"`
+	Core                   Package `json:"core"`
 }
 
 type State struct {
-	DeviceID                string            `json:"deviceId"`
-	Channel                 string            `json:"channel"`
-	CurrentVersion          string            `json:"currentVersion"`
-	PreviousVersion         string            `json:"previousVersion"`
-	AvailableVersion        string            `json:"availableVersion"`
-	PendingVersion          string            `json:"pendingVersion"`
-	Status                  string            `json:"status"`
-	Message                 string            `json:"message"`
-	Progress                int               `json:"progress"`
-	ReleaseNotes            string            `json:"releaseNotes"`
-	CorePort                int               `json:"corePort"`
-	ControlPort             int               `json:"controlPort"`
-	LastCheckedAt           string            `json:"lastCheckedAt"`
-	PostponedUntil          string            `json:"postponedUntil"`
-	LastSupportCode         string            `json:"lastSupportCode"`
-	Components              map[string]string `json:"components"`
-	CoreSHA256              string            `json:"coreSha256"`
-	PreviousCoreSHA256      string            `json:"previousCoreSha256"`
-	PendingCoreSHA256       string            `json:"pendingCoreSha256"`
-	CurrentDatabaseVersion  int               `json:"currentDatabaseVersion"`
-	PreviousDatabaseVersion int               `json:"previousDatabaseVersion"`
-	PendingDatabaseVersion  int               `json:"pendingDatabaseVersion"`
-	PendingDatabaseBackup   string            `json:"pendingDatabaseBackup"`
-	PendingDatabaseSHA256   string            `json:"pendingDatabaseSha256"`
+	Channel                 string `json:"channel"`
+	CurrentVersion          string `json:"currentVersion"`
+	PreviousVersion         string `json:"previousVersion"`
+	AvailableVersion        string `json:"availableVersion"`
+	PendingVersion          string `json:"pendingVersion"`
+	Status                  string `json:"status"`
+	Message                 string `json:"message"`
+	Progress                int    `json:"progress"`
+	ReleaseNotes            string `json:"releaseNotes"`
+	CorePort                int    `json:"corePort"`
+	ControlPort             int    `json:"controlPort"`
+	LastCheckedAt           string `json:"lastCheckedAt"`
+	PostponedUntil          string `json:"postponedUntil"`
+	LastSupportCode         string `json:"lastSupportCode"`
+	CoreSHA256              string `json:"coreSha256"`
+	PreviousCoreSHA256      string `json:"previousCoreSha256"`
+	PendingCoreSHA256       string `json:"pendingCoreSha256"`
+	CurrentDatabaseVersion  int    `json:"currentDatabaseVersion"`
+	PreviousDatabaseVersion int    `json:"previousDatabaseVersion"`
+	PendingDatabaseVersion  int    `json:"pendingDatabaseVersion"`
+	PendingDatabaseBackup   string `json:"pendingDatabaseBackup"`
+	PendingDatabaseSHA256   string `json:"pendingDatabaseSha256"`
 }
 
 type Directories struct {
-	Root, Versions, Components, Cache, Logs, Data, StateFile string
+	Root, Versions, Cache, Logs, Data, StateFile string
 }
 
 type Launcher struct {
@@ -144,18 +140,9 @@ func main() {
 	if err != nil {
 		failUser("启动器状态文件损坏。", err)
 	}
-	if launcher.state.DeviceID == "" {
-		launcher.state.DeviceID = randomToken()
-	}
-	if launcher.state.Channel == "" {
-		launcher.state.Channel, err = configuredChannel()
-		if err != nil {
-			failUser("启动器发布通道配置无效。", err)
-		}
-	}
-	if launcher.state.Components == nil {
-		launcher.state.Components = map[string]string{}
-	}
+	// Auto Voucher now has one public update stream. This also migrates
+	// historical pilot state written by earlier launchers.
+	launcher.state.Channel = "stable"
 	if launcher.openExisting() {
 		return
 	}
@@ -188,15 +175,14 @@ func directories() (Directories, error) {
 	}
 	root := filepath.Join(local, "Auto Voucher")
 	dirs := Directories{
-		Root:       root,
-		Versions:   filepath.Join(root, "app", "versions"),
-		Components: filepath.Join(root, "app", "components"),
-		Cache:      filepath.Join(root, "cache"),
-		Logs:       filepath.Join(root, "logs"),
-		Data:       filepath.Join(root, "data"),
-		StateFile:  filepath.Join(root, "app", "launcher-state.json"),
+		Root:      root,
+		Versions:  filepath.Join(root, "app", "versions"),
+		Cache:     filepath.Join(root, "cache"),
+		Logs:      filepath.Join(root, "logs"),
+		Data:      filepath.Join(root, "data"),
+		StateFile: filepath.Join(root, "app", "launcher-state.json"),
 	}
-	for _, path := range []string{dirs.Versions, dirs.Components, dirs.Cache, dirs.Logs, dirs.Data, filepath.Dir(dirs.StateFile)} {
+	for _, path := range []string{dirs.Versions, dirs.Cache, dirs.Logs, dirs.Data, filepath.Dir(dirs.StateFile)} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			return Directories{}, err
 		}
@@ -252,22 +238,17 @@ func (l *Launcher) manifestURL() string {
 	return strings.TrimSpace(defaultManifestURL)
 }
 
-func configuredChannel() (string, error) {
-	channel := strings.TrimSpace(defaultChannel)
-	if channel != "pilot" && channel != "stable" {
-		return "", fmt.Errorf("启动器发布通道必须为 pilot 或 stable，当前为 %q", channel)
-	}
-	return channel, nil
-}
-
 func validateReleaseContract() error {
 	expected := strings.Join([]string{
 		strings.TrimSpace(launcherVersion),
-		strings.TrimSpace(defaultChannel),
 		strings.TrimSpace(defaultManifestURL),
 	}, "|")
 	if releaseContract != expected {
 		return fmt.Errorf("启动器发布元数据不一致")
+	}
+	manifestURL, err := url.Parse(strings.TrimSpace(defaultManifestURL))
+	if err != nil || manifestURL.Scheme != "https" || !strings.HasSuffix(manifestURL.Path, "/stable/manifest.json") {
+		return errors.New("启动器必须使用 stable HTTPS 更新清单")
 	}
 	return nil
 }
@@ -295,9 +276,6 @@ func (l *Launcher) fetchManifest(ctx context.Context) (*Manifest, error) {
 	if err := validateManifest(manifest); err != nil {
 		return nil, err
 	}
-	if manifest.Channel != l.state.Channel {
-		return nil, errors.New("版本清单通道与本机通道不一致")
-	}
 	if compareVersions(launcherVersion, manifest.MinimumLauncherVersion) < 0 {
 		return nil, fmt.Errorf("启动器需要先升级到 %s", manifest.MinimumLauncherVersion)
 	}
@@ -310,8 +288,8 @@ func validateManifest(manifest Manifest) error {
 	if manifest.SchemaVersion != 1 {
 		return fmt.Errorf("不支持的版本清单结构 v%d", manifest.SchemaVersion)
 	}
-	if manifest.Channel != "pilot" && manifest.Channel != "stable" {
-		return errors.New("版本清单通道必须为 pilot 或 stable")
+	if manifest.Channel != "stable" {
+		return errors.New("版本清单必须属于 stable 更新流")
 	}
 	for name, value := range map[string]string{
 		"version":                manifest.Version,
@@ -325,22 +303,11 @@ func validateManifest(manifest Manifest) error {
 	if compareVersions(manifest.MinimumVersion, manifest.Version) > 0 {
 		return errors.New("minimumVersion 不能高于发布版本")
 	}
-	if manifest.RolloutPercentage < 0 || manifest.RolloutPercentage > 100 {
-		return errors.New("灰度比例必须在 0–100 之间")
-	}
 	if _, err := time.Parse(time.RFC3339, manifest.PublishedAt); err != nil {
 		return errors.New("publishedAt 必须为 RFC3339 时间")
 	}
-	if err := validatePackageDescriptor("core", manifest.Core); err != nil {
+	if err := validatePackageDescriptor("application", manifest.Core); err != nil {
 		return err
-	}
-	for name, component := range manifest.Components {
-		if name != "ocr" && name != "pdf" {
-			return fmt.Errorf("不支持的可选组件：%s", name)
-		}
-		if err := validatePackageDescriptor(name, component); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -458,7 +425,7 @@ func (l *Launcher) install(manifest *Manifest) error {
 	if free, err := freeDiskBytes(l.dirs.Root); err == nil && free < required {
 		return fmt.Errorf("磁盘空间不足：需要 %d bytes，可用 %d bytes", required, free)
 	}
-	archive := filepath.Join(l.dirs.Cache, "core-"+manifest.Version+".zip.part")
+	archive := filepath.Join(l.dirs.Cache, "application-"+manifest.Version+".zip.part")
 	l.state.Status = "downloading"
 	l.state.Progress = 0
 	_ = l.save()
@@ -719,17 +686,14 @@ func (l *Launcher) startCore(controlURL string) error {
 		"AUTO_VOUCHER_LAUNCHER_VERSION="+launcherVersion,
 		"AUTO_VOUCHER_CORE_VERSION="+l.state.CurrentVersion,
 	)
-	if version := l.state.Components["ocr"]; version != "" {
-		worker := filepath.Join(l.dirs.Components, "ocr", version, "AutoVoucherOCR.exe")
-		if _, err := os.Stat(worker); err == nil {
-			command.Env = append(command.Env, "AUTO_VOUCHER_OCR_WORKER="+worker)
-		}
+	versionRoot := filepath.Join(l.dirs.Versions, l.state.CurrentVersion)
+	ocrWorker := filepath.Join(versionRoot, "AutoVoucherOCR.exe")
+	if _, err := os.Stat(ocrWorker); err == nil {
+		command.Env = append(command.Env, "AUTO_VOUCHER_OCR_WORKER="+ocrWorker)
 	}
-	if version := l.state.Components["pdf"]; version != "" {
-		worker := filepath.Join(l.dirs.Components, "pdf", version, "AutoVoucherPDF.exe")
-		if _, err := os.Stat(worker); err == nil {
-			command.Env = append(command.Env, "AUTO_VOUCHER_PDF_WORKER="+worker)
-		}
+	pdfWorker := filepath.Join(versionRoot, "AutoVoucherPDF.exe")
+	if _, err := os.Stat(pdfWorker); err == nil {
+		command.Env = append(command.Env, "AUTO_VOUCHER_PDF_WORKER="+pdfWorker)
 	}
 	if err := command.Start(); err != nil {
 		return err
@@ -913,9 +877,7 @@ func (l *Launcher) startControlServer() (string, error) {
 	mux.HandleFunc("/v1/update/download", l.authorize(l.handleDownload))
 	mux.HandleFunc("/v1/update/apply", l.authorize(l.handleApply))
 	mux.HandleFunc("/v1/update/postpone", l.authorize(l.handlePostpone))
-	mux.HandleFunc("/v1/update/reinstall-ocr", l.authorize(l.handleOptionalComponent))
-	mux.HandleFunc("/v1/update/reinstall-pdf", l.authorize(l.handleOptionalComponent))
-	mux.HandleFunc("/v1/update/recreate-shortcut", l.authorize(l.handleOptionalComponent))
+	mux.HandleFunc("/v1/update/recreate-shortcut", l.authorize(l.handleShortcutRepair))
 	mux.HandleFunc("/v1/diagnostics", l.authorize(l.handleDiagnostics))
 	go func() {
 		_ = (&http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}).Serve(listener)
@@ -949,7 +911,6 @@ func (l *Launcher) handleStatus(writer http.ResponseWriter, _ *http.Request) {
 		"lastCheckedAt":    l.state.LastCheckedAt,
 		"postponedUntil":   l.state.PostponedUntil,
 		"supportCode":      l.state.LastSupportCode,
-		"components":       l.state.Components,
 	})
 }
 
@@ -967,8 +928,7 @@ func (l *Launcher) handleCheck(writer http.ResponseWriter, request *http.Request
 	l.manifest = manifest
 	l.state.LastCheckedAt = time.Now().UTC().Format(time.RFC3339)
 	mandatory := compareVersions(l.state.CurrentVersion, manifest.MinimumVersion) < 0
-	if compareVersions(manifest.Version, l.state.CurrentVersion) > 0 &&
-		(mandatory || rolloutAllowed(l.state.DeviceID, manifest.RolloutPercentage)) {
+	if compareVersions(manifest.Version, l.state.CurrentVersion) > 0 {
 		l.state.Status = "available"
 		if mandatory {
 			l.state.Status = "security_required"
@@ -1071,14 +1031,13 @@ func (l *Launcher) handleDiagnostics(writer http.ResponseWriter, request *http.R
 	}
 	l.mu.Lock()
 	state := map[string]any{
-		"launcherVersion":     launcherVersion,
-		"currentVersion":      l.state.CurrentVersion,
-		"previousVersion":     l.state.PreviousVersion,
-		"availableVersion":    l.state.AvailableVersion,
-		"status":              l.state.Status,
-		"lastCheckedAt":       l.state.LastCheckedAt,
-		"lastSupportCode":     l.state.LastSupportCode,
-		"installedComponents": l.state.Components,
+		"launcherVersion":  launcherVersion,
+		"currentVersion":   l.state.CurrentVersion,
+		"previousVersion":  l.state.PreviousVersion,
+		"availableVersion": l.state.AvailableVersion,
+		"status":           l.state.Status,
+		"lastCheckedAt":    l.state.LastCheckedAt,
+		"lastSupportCode":  l.state.LastSupportCode,
 	}
 	l.mu.Unlock()
 	writeJSON(writer, map[string]any{
@@ -1096,85 +1055,12 @@ func (l *Launcher) handlePostpone(writer http.ResponseWriter, request *http.Requ
 	l.handleStatus(writer, request)
 }
 
-func (l *Launcher) handleOptionalComponent(writer http.ResponseWriter, request *http.Request) {
-	if strings.Contains(request.URL.Path, "shortcut") {
-		if err := createShortcut(); err != nil {
-			l.writeError(writer, "SHORTCUT_CREATE_FAILED", err)
-			return
-		}
-		writeJSON(writer, map[string]any{"available": true, "status": "shortcut_created", "message": "桌面入口已重新创建"})
+func (l *Launcher) handleShortcutRepair(writer http.ResponseWriter, _ *http.Request) {
+	if err := createShortcut(); err != nil {
+		l.writeError(writer, "SHORTCUT_CREATE_FAILED", err)
 		return
 	}
-	manifest := l.manifest
-	if manifest == nil {
-		var err error
-		manifest, err = l.fetchManifest(request.Context())
-		if err != nil {
-			l.writeError(writer, "COMPONENT_CHECK_FAILED", err)
-			return
-		}
-	}
-	component := "ocr"
-	if strings.Contains(request.URL.Path, "pdf") {
-		component = "pdf"
-	}
-	pkg, ok := manifest.Components[component]
-	if !ok {
-		l.writeError(writer, "COMPONENT_UNAVAILABLE", fmt.Errorf("当前版本未发布 %s 组件", strings.ToUpper(component)))
-		return
-	}
-	if err := l.installComponent(component, manifest.Version, pkg); err != nil {
-		l.writeError(writer, "COMPONENT_INSTALL_FAILED", err)
-		return
-	}
-	writeJSON(writer, map[string]any{
-		"available":       true,
-		"status":          "component_installed",
-		"component":       component,
-		"version":         manifest.Version,
-		"message":         strings.ToUpper(component) + " 组件已安装，重启后生效",
-		"restartRequired": true,
-	})
-}
-
-func (l *Launcher) installComponent(name, version string, pkg Package) error {
-	archive := filepath.Join(l.dirs.Cache, name+"-"+version+".zip.part")
-	if err := l.downloadPackage(context.Background(), pkg, archive); err != nil {
-		return err
-	}
-	target := filepath.Join(l.dirs.Components, name, version)
-	staging := target + ".staging"
-	_ = os.RemoveAll(staging)
-	if err := os.MkdirAll(staging, 0o700); err != nil {
-		return err
-	}
-	if err := verifyExpandedSize(archive, pkg.ExpandedSize); err != nil {
-		_ = os.RemoveAll(staging)
-		return err
-	}
-	if err := safeExtractZip(archive, staging); err != nil {
-		_ = os.RemoveAll(staging)
-		return err
-	}
-	if err := verifyFileHash(filepath.Join(staging, pkg.Entrypoint), pkg.EntrypointSHA256); err != nil {
-		_ = os.RemoveAll(staging)
-		return err
-	}
-	backup := target + ".previous"
-	_ = os.RemoveAll(backup)
-	if _, err := os.Stat(target); err == nil {
-		if err := os.Rename(target, backup); err != nil {
-			_ = os.RemoveAll(staging)
-			return err
-		}
-	}
-	if err := os.Rename(staging, target); err != nil {
-		_ = os.Rename(backup, target)
-		return err
-	}
-	_ = os.RemoveAll(backup)
-	l.state.Components[name] = version
-	return l.save()
+	writeJSON(writer, map[string]any{"available": true, "status": "shortcut_created", "message": "桌面入口已重新创建"})
 }
 
 func (l *Launcher) autoUpdateLoop() {
@@ -1196,8 +1082,7 @@ func (l *Launcher) checkForUpdate(ctx context.Context) {
 	l.state.LastCheckedAt = time.Now().UTC().Format(time.RFC3339)
 	mandatory := compareVersions(l.state.CurrentVersion, manifest.MinimumVersion) < 0
 	available := false
-	if compareVersions(manifest.Version, l.state.CurrentVersion) > 0 &&
-		(mandatory || rolloutAllowed(l.state.DeviceID, manifest.RolloutPercentage)) {
+	if compareVersions(manifest.Version, l.state.CurrentVersion) > 0 {
 		available = true
 		l.state.Status = "available"
 		if mandatory {
@@ -1422,18 +1307,6 @@ func findPort() (int, error) {
 		}
 	}
 	return 0, errors.New("8765–8785 均被占用")
-}
-
-func rolloutAllowed(deviceID string, percentage int) bool {
-	if percentage >= 100 {
-		return true
-	}
-	if percentage <= 0 {
-		return false
-	}
-	hash := sha256.Sum256([]byte(deviceID))
-	bucket := int(hash[0]) * 100 / 256
-	return bucket < percentage
 }
 
 func compareVersions(left, right string) int {

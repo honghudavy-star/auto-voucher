@@ -18,6 +18,7 @@ from auto_voucher.service import (
     extract_ocr_candidates,
     extract_pdf_text,
     parse_ocr_candidate_fields,
+    resolve_worker,
 )
 
 
@@ -307,7 +308,7 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(fields["date"], "2026-07-24")
         self.assertEqual(fields["amount"], "12,800.50")
 
-    def test_optional_pdf_worker_contract_keeps_component_out_of_core(self):
+    def test_pdf_worker_contract_uses_explicit_worker(self):
         with tempfile.TemporaryDirectory() as directory:
             worker = Path(directory) / "pdf-worker.py"
             worker.write_text(
@@ -320,7 +321,7 @@ class BackendTests(unittest.TestCase):
             with patch.dict(os.environ, {"AUTO_VOUCHER_PDF_WORKER": str(worker)}):
                 self.assertEqual(extract_pdf_text(b"%PDF-test"), "PDF worker text")
 
-    def test_optional_ocr_worker_returns_real_confidence_evidence(self):
+    def test_ocr_worker_returns_real_confidence_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             worker = Path(directory) / "ocr-worker.py"
             worker.write_text(
@@ -335,6 +336,22 @@ class BackendTests(unittest.TestCase):
                 result = extract_ocr_candidates("scan.png", b"image")
             self.assertEqual(result["confidence"], 0.91)
             self.assertEqual(result["candidates"]["amount"], "128.00")
+
+    def test_worker_resolver_finds_complete_bundle_sibling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            core = root / "AutoVoucherCore.exe"
+            worker = root / "AutoVoucherOCR.exe"
+            core.write_bytes(b"core")
+            worker.write_bytes(b"ocr")
+            with patch.dict(os.environ, {}, clear=True), patch(
+                "auto_voucher.service.sys.executable",
+                str(core),
+            ):
+                self.assertEqual(
+                    resolve_worker("AUTO_VOUCHER_OCR_WORKER", "AutoVoucherOCR.exe"),
+                    str(worker.resolve()),
+                )
 
     def test_rejects_unbalanced_state(self):
         with tempfile.TemporaryDirectory() as directory:
