@@ -50,6 +50,7 @@ test("Windows BAT launcher preserves the complete source runtime", async () => {
   assert.match(bundleBuilder, /"Start-Auto-Voucher\.bat"/);
   assert.match(bundleBuilder, /Remove-Item -LiteralPath \(Join-Path \$inner "Start-Auto-Voucher\.bat"\)/);
   assert.match(bundleBuilder, /Bundle root must contain only/);
+  assert.match(bundleBuilder, /exit 0\s*$/);
   assert.equal(packageJson.version, "0.2.4");
   assert.doesNotMatch(launcher, /AutoVoucher(?:Core|OCR|PDF|Setup).*\.exe/i);
 });

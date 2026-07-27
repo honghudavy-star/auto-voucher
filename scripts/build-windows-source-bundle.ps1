@@ -66,3 +66,5 @@ try {
         Remove-Item -LiteralPath $stage -Recurse -Force
     }
 }
+
+exit 0
