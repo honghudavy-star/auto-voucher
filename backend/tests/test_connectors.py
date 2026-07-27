@@ -9,6 +9,7 @@ from auto_voucher.connectors import (
     ConnectorError,
     FeishuApprovalConnector,
     KingdeeK3CloudConnector,
+    OaJsonApiConnector,
     map_kingdee_error,
 )
 
@@ -32,6 +33,35 @@ class FakeTransport:
 
 
 class ConnectorTests(unittest.TestCase):
+    def test_generic_oa_json_api_filters_approved_records_and_maps_nested_paths(self):
+        transport = FakeTransport([
+            (200, {
+                "data": {
+                    "items": [
+                        {"id": "OA-1", "approval": {"status": "APPROVED"}},
+                        {"id": "OA-2", "approval": {"status": "PENDING"}},
+                    ],
+                },
+            }, {"X-Request-Id": "oa-request"}),
+        ])
+        connector = OaJsonApiConnector(
+            {
+                "baseUrl": "https://oa.example.test/api/records",
+                "environment": "测试环境",
+                "providerName": "企业微信",
+                "recordsPath": "data.items",
+                "approvalStatusPath": "approval.status",
+                "approvedValues": ["APPROVED"],
+                "authHeader": "X-Access-Token",
+                "authScheme": "",
+            },
+            "secret-token",
+            transport,
+        )
+        result = connector.sync_approved_instances()
+        self.assertEqual([item["id"] for item in result["items"]], ["OA-1"])
+        self.assertEqual(transport.requests[0]["headers"]["X-Access-Token"], "secret-token")
+
     def test_finance_adapters_expose_the_unified_contract(self):
         contract = (
             "probe",

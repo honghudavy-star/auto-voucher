@@ -11,7 +11,6 @@ function normalizeState(state) {
   state.operatorConfigured ??= false;
   state.enterpriseProfiles ||= [];
   state.sourceSystems ||= [];
-  state.businessScenarios ||= [];
   state.templateProfiles ||= [];
   state.connectors ||= [];
   state.activeFinanceConnectorId ||= "";
@@ -129,6 +128,13 @@ export async function importFiles(files, options = {}) {
   if (options.templateName) body.append("templateName", options.templateName);
   const submission = await apiRequest("/api/import", { method: "POST", body });
   return waitForJob(submission, options.onProgress);
+}
+
+export function restoreDefaultAccounts() {
+  return apiRequest("/api/master-data/accounts/restore-defaults", {
+    method: "POST",
+    body: JSON.stringify({ confirmation: "恢复默认科目" }),
+  });
 }
 
 export async function downloadBackup() {

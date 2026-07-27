@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from auto_voucher.database import Database
+from auto_voucher.defaults import initialize_default_accounts, restore_default_accounts
 from auto_voucher.setup import SetupService, empty_production_state
 
 
@@ -26,29 +27,60 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(state["company"], "")
         self.assertEqual(state["ledger"], "")
         self.assertFalse(state["productionActivation"]["enabled"])
+        accounts = [item for item in state["masterData"] if item["category"] == "account" and item["active"]]
+        self.assertEqual(len(accounts), 66)
+        self.assertEqual(
+            next(item for item in accounts if item["code"] == "1002")["name"],
+            "银行存款",
+        )
+        self.assertEqual(state["defaultAccountSource"]["documentNumber"], "财会〔2011〕17号")
+
+    def test_existing_custom_accounts_are_not_overwritten_during_initialization(self):
+        state = empty_production_state()
+        state["masterData"] = [{
+            "id": "CUSTOM-1",
+            "category": "account",
+            "code": "1002",
+            "name": "自定义银行存款",
+            "active": True,
+        }]
+        state.pop("defaultAccountsInitialized")
+        self.assertTrue(initialize_default_accounts(state))
+        active = [item for item in state["masterData"] if item.get("active", True)]
+        self.assertEqual([item["name"] for item in active], ["自定义银行存款"])
+
+    def test_restore_default_accounts_preserves_history(self):
+        state = empty_production_state()
+        current = next(item for item in state["masterData"] if item["code"] == "1002")
+        current["name"] = "客户银行科目"
+        count = restore_default_accounts(state, "2026-07-26T00:00:00Z")
+        active = [
+            item for item in state["masterData"]
+            if item["category"] == "account" and item.get("active", True)
+        ]
+        self.assertEqual(count, 66)
+        self.assertEqual(len(active), 66)
+        self.assertEqual(next(item for item in active if item["code"] == "1002")["name"], "银行存款")
+        self.assertFalse(current["active"])
 
     def test_plan_is_deterministic_and_creates_only_selected_real_connectors(self):
         result = self.service.plan({
-            "enterprise": {
-                "name": "客户集团",
-                "legalEntity": "客户主体",
-                "accountSet": "正式账套",
-                "ledger": "总账",
-                "accountingStandard": "企业会计准则",
-                "baseCurrency": "CNY",
-                "voucherType": "记",
-                "operator": "财务测试员",
-            },
             "targetSystemId": "yonyou-u8",
-            "targetVersion": "V13",
-            "deployment": "客户本地部署",
-            "sourceSystemIds": ["feishu-approval", "local-files"],
-            "businessScenarios": ["费用报销", "采购付款"],
+            "sourceSystemIds": ["wecom-oa-json", "local-files"],
         })
         state = result["state"]
         self.assertEqual(state["flowPlan"]["catalogVersion"], "2026.07.1")
         self.assertEqual([step["order"] for step in state["flowPlan"]["steps"]], list(range(1, 8)))
-        self.assertEqual({item["id"] for item in state["connectors"]}, {"yonyou-u8", "feishu-approval"})
+        self.assertEqual({item["id"] for item in state["connectors"]}, {"yonyou-u8", "wecom-oa-json"})
+        self.assertEqual(state["activeWorkflowConnectorId"], "wecom-oa-json")
+        self.assertEqual(
+            next(item for item in state["connectors"] if item["id"] == "wecom-oa-json")["providerName"],
+            "企业微信",
+        )
+        self.assertEqual(state["enterpriseProfiles"], [])
+        self.assertNotIn("selectedVersion", state["targetSystem"])
+        self.assertNotIn("deployment", state["targetSystem"])
+        self.assertNotIn("businessScenarios", state)
         self.assertNotIn("demo-finance", {item["id"] for item in state["connectors"]})
         self.assertEqual(state["readiness"]["plan"]["status"], "ready")
 
@@ -73,19 +105,8 @@ class SetupTests(unittest.TestCase):
 
     def test_preflight_requires_real_launch_evidence(self):
         self.service.plan({
-            "enterprise": {
-                "name": "客户集团",
-                "legalEntity": "客户主体",
-                "accountSet": "测试账套",
-                "ledger": "总账",
-                "accountingStandard": "企业会计准则",
-                "baseCurrency": "CNY",
-                "voucherType": "记",
-                "operator": "财务测试员",
-            },
             "targetSystemId": "kingdee-k3cloud",
             "sourceSystemIds": ["local-files"],
-            "businessScenarios": ["采购付款"],
         })
         report = self.service.preflight()
         reasons = report["gates"]["systems"]["reasons"]

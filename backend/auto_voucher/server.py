@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from .database import Database, utc_now, validate_state
 from .connectors import ConnectorError
 from .diagnostics import DiagnosticLogger, app_version
+from .defaults import restore_default_accounts
 from .integration import ConnectorService, ensure_connector_defaults
 from .service import VoucherService
 from .security import SecretStore
@@ -428,6 +429,19 @@ def make_handler(
                         raise ValueError("请选择一个文件预览")
                     filename, content, _media_type = selected[0]
                     self.json_response(service.preview_file(filename, content))
+                elif path == "/api/master-data/accounts/restore-defaults":
+                    self.read_json()
+                    state = initialize_production_state()
+                    count = restore_default_accounts(state, utc_now())
+                    state.setdefault("auditLog", []).insert(0, {
+                        "id": f"LOG-{uuid.uuid4().hex[:10].upper()}",
+                        "action": "恢复默认科目",
+                        "subject": "小企业会计准则科目表",
+                        "operator": state.get("operator") or "本机操作者",
+                        "detail": f"停用当前科目版本并恢复 {count} 个内置默认科目",
+                        "at": utc_now(),
+                    })
+                    self.json_response({"state": database.put_state(state), "count": count})
                 elif path == "/api/setup/plan":
                     self.json_response(setup_service.plan(self.read_json()))
                 elif path == "/api/setup/preflight":
@@ -456,7 +470,12 @@ def make_handler(
                 elif path == "/api/environment/repair":
                     payload = self.read_json()
                     action = str(payload.get("action") or "")
-                    if action in {"reinstall-ocr", "reinstall-pdf", "recreate-shortcut"}:
+                    if action == "clear-update-cache" and launcher_client.endpoint and launcher_client.token:
+                        local_result = environment_service.repair(action)
+                        result = launcher_client.command("cleanup")
+                        result["environment"] = local_result.get("environment")
+                        self.json_response(result)
+                    elif action in {"reinstall-ocr", "reinstall-pdf", "recreate-shortcut"}:
                         self.json_response(launcher_client.command(action))
                     else:
                         self.json_response(environment_service.repair(action))

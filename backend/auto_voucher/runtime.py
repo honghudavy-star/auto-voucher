@@ -590,7 +590,16 @@ class LauncherClient:
             }
 
     def command(self, action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        allowed = {"check", "download", "apply", "postpone", "reinstall-ocr", "reinstall-pdf", "recreate-shortcut"}
+        allowed = {
+            "check",
+            "download",
+            "apply",
+            "postpone",
+            "cleanup",
+            "reinstall-ocr",
+            "reinstall-pdf",
+            "recreate-shortcut",
+        }
         if action not in allowed:
             raise ValueError("不允许执行该启动器操作")
         if not self.endpoint or not self.token:

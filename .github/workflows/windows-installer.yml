@@ -175,7 +175,7 @@ jobs:
         shell: pwsh
         run: |
           $manifestUrl = if ($env:AUTO_VOUCHER_CORE_BASE_URL) { "$($env:AUTO_VOUCHER_CORE_BASE_URL.TrimEnd('/'))/${{ steps.release.outputs.channel }}/manifest.json" } else { "https://invalid.local/auto-voucher/${{ steps.release.outputs.channel }}/manifest.json" }
-          go build -trimpath -ldflags "-s -w -H=windowsgui -X main.launcherVersion=${{ steps.release.outputs.version }} -X main.defaultManifestURL=$manifestUrl -X main.manifestPublicKey=${{ steps.signing.outputs.public_key }}" -o ..\release\AutoVoucherLauncher.exe .
+          go build -trimpath -ldflags "-s -w -H=windowsgui -X main.launcherVersion=${{ steps.release.outputs.version }} -X main.defaultManifestURL=$manifestUrl -X main.defaultChannel=${{ steps.release.outputs.channel }} -X main.manifestPublicKey=${{ steps.signing.outputs.public_key }}" -o ..\release\AutoVoucherLauncher.exe .
 
       - name: Generate signed version manifest
         working-directory: launcher

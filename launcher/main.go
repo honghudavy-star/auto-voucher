@@ -29,6 +29,7 @@ import (
 var (
 	launcherVersion    = "0.1.0-dev"
 	defaultManifestURL = ""
+	defaultChannel     = "stable"
 	manifestPublicKey  = ""
 )
 
@@ -143,10 +144,21 @@ func main() {
 		launcher.state.DeviceID = randomToken()
 	}
 	if launcher.state.Channel == "" {
-		launcher.state.Channel = "stable"
+		launcher.state.Channel, err = configuredChannel()
+		if err != nil {
+			failUser("启动器发布通道配置无效。", err)
+		}
 	}
 	if launcher.state.Components == nil {
 		launcher.state.Components = map[string]string{}
+	}
+	if removed, freed, cleanupErr := launcher.cleanupInstalledPackages(); cleanupErr != nil {
+		launcher.log("WARNING", "STARTUP_STORAGE_CLEANUP_FAILED", cleanupErr.Error(), nil)
+	} else if removed > 0 {
+		launcher.log("INFO", "STARTUP_STORAGE_CLEANUP_COMPLETED", "已清理安装缓存和旧组件", map[string]any{
+			"removedFiles": removed,
+			"freedBytes":   freed,
+		})
 	}
 	if launcher.openExisting() {
 		return
@@ -242,6 +254,14 @@ func (l *Launcher) manifestURL() string {
 		return value
 	}
 	return strings.TrimSpace(defaultManifestURL)
+}
+
+func configuredChannel() (string, error) {
+	channel := strings.TrimSpace(defaultChannel)
+	if channel != "pilot" && channel != "stable" {
+		return "", fmt.Errorf("启动器发布通道必须为 pilot 或 stable，当前为 %q", channel)
+	}
+	return channel, nil
 }
 
 func (l *Launcher) fetchManifest(ctx context.Context) (*Manifest, error) {
@@ -476,7 +496,11 @@ func (l *Launcher) install(manifest *Manifest) error {
 	if err := l.save(); err != nil {
 		return err
 	}
-	return l.pruneVersions()
+	if err := l.pruneVersions(); err != nil {
+		return err
+	}
+	l.removeInstalledArchive(archive)
+	return nil
 }
 
 func (l *Launcher) downloadPackage(ctx context.Context, pkg Package, destination string) error {
@@ -888,6 +912,7 @@ func (l *Launcher) startControlServer() (string, error) {
 	mux.HandleFunc("/v1/update/reinstall-ocr", l.authorize(l.handleOptionalComponent))
 	mux.HandleFunc("/v1/update/reinstall-pdf", l.authorize(l.handleOptionalComponent))
 	mux.HandleFunc("/v1/update/recreate-shortcut", l.authorize(l.handleOptionalComponent))
+	mux.HandleFunc("/v1/update/cleanup", l.authorize(l.handleCleanup))
 	mux.HandleFunc("/v1/diagnostics", l.authorize(l.handleDiagnostics))
 	go func() {
 		_ = (&http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}).Serve(listener)
@@ -1077,6 +1102,8 @@ func (l *Launcher) handleOptionalComponent(writer http.ResponseWriter, request *
 		writeJSON(writer, map[string]any{"available": true, "status": "shortcut_created", "message": "桌面入口已重新创建"})
 		return
 	}
+	l.downloadMu.Lock()
+	defer l.downloadMu.Unlock()
 	manifest := l.manifest
 	if manifest == nil {
 		var err error
@@ -1106,6 +1133,27 @@ func (l *Launcher) handleOptionalComponent(writer http.ResponseWriter, request *
 		"version":         manifest.Version,
 		"message":         strings.ToUpper(component) + " 组件已安装，重启后生效",
 		"restartRequired": true,
+	})
+}
+
+func (l *Launcher) handleCleanup(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	l.downloadMu.Lock()
+	defer l.downloadMu.Unlock()
+	removedFiles, freedBytes, err := l.cleanupInstalledPackages()
+	if err != nil {
+		l.writeError(writer, "STORAGE_CLEANUP_FAILED", err)
+		return
+	}
+	writeJSON(writer, map[string]any{
+		"available":    true,
+		"status":       l.state.Status,
+		"message":      fmt.Sprintf("已清理 %d 个文件，释放 %d bytes", removedFiles, freedBytes),
+		"removedFiles": removedFiles,
+		"freedBytes":   freedBytes,
 	})
 }
 
@@ -1146,7 +1194,17 @@ func (l *Launcher) installComponent(name, version string, pkg Package) error {
 	}
 	_ = os.RemoveAll(backup)
 	l.state.Components[name] = version
-	return l.save()
+	if err := l.save(); err != nil {
+		return err
+	}
+	l.removeInstalledArchive(archive)
+	if err := l.pruneComponentVersions(name, version); err != nil {
+		l.log("WARNING", "COMPONENT_PRUNE_FAILED", err.Error(), map[string]any{
+			"component": name,
+			"version":   version,
+		})
+	}
+	return nil
 }
 
 func (l *Launcher) autoUpdateLoop() {
@@ -1245,6 +1303,105 @@ func (l *Launcher) pruneVersions() error {
 		versions = append(versions[:oldest], versions[oldest+1:]...)
 	}
 	return nil
+}
+
+func (l *Launcher) pruneComponentVersions(name, activeVersion string) error {
+	if name != "ocr" && name != "pdf" {
+		return fmt.Errorf("不支持清理组件：%s", name)
+	}
+	root := filepath.Join(l.dirs.Components, name)
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == activeVersion {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (l *Launcher) cleanupInstalledPackages() (int, int64, error) {
+	entries, err := os.ReadDir(l.dirs.Cache)
+	if errors.Is(err, os.ErrNotExist) {
+		entries = nil
+	} else if err != nil {
+		return 0, 0, err
+	}
+	removedFiles := 0
+	var freedBytes int64
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		installedPath := l.installedPathForCache(entry.Name())
+		if installedPath == "" {
+			continue
+		}
+		if info, statErr := os.Stat(installedPath); statErr != nil || info.IsDir() {
+			continue
+		}
+		cachePath := filepath.Join(l.dirs.Cache, entry.Name())
+		info, statErr := entry.Info()
+		if statErr != nil {
+			return removedFiles, freedBytes, statErr
+		}
+		if err := os.Remove(cachePath); err != nil {
+			return removedFiles, freedBytes, err
+		}
+		removedFiles++
+		freedBytes += info.Size()
+	}
+	for _, name := range []string{"ocr", "pdf"} {
+		if activeVersion := l.state.Components[name]; activeVersion != "" {
+			if err := l.pruneComponentVersions(name, activeVersion); err != nil {
+				return removedFiles, freedBytes, err
+			}
+		}
+	}
+	return removedFiles, freedBytes, nil
+}
+
+func (l *Launcher) installedPathForCache(name string) string {
+	const suffix = ".zip.part"
+	if !strings.HasSuffix(name, suffix) {
+		return ""
+	}
+	if strings.HasPrefix(name, "core-") {
+		version := strings.TrimSuffix(strings.TrimPrefix(name, "core-"), suffix)
+		if releaseVersionPattern.MatchString(version) {
+			return filepath.Join(l.dirs.Versions, version, "AutoVoucherCore.exe")
+		}
+		return ""
+	}
+	for _, component := range []string{"ocr", "pdf"} {
+		prefix := component + "-"
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		version := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+		if !releaseVersionPattern.MatchString(version) {
+			return ""
+		}
+		entrypoint := "AutoVoucher" + strings.ToUpper(component) + ".exe"
+		return filepath.Join(l.dirs.Components, component, version, entrypoint)
+	}
+	return ""
+}
+
+func (l *Launcher) removeInstalledArchive(path string) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		l.log("WARNING", "PACKAGE_CACHE_CLEANUP_FAILED", err.Error(), map[string]any{
+			"path": filepath.Base(path),
+		})
+	}
 }
 
 func (l *Launcher) writeError(writer http.ResponseWriter, code string, err error) {
