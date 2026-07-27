@@ -28,6 +28,7 @@ test("Windows BAT launcher preserves the complete source runtime", async () => {
   assert.match(updater, /raw\.githubusercontent\.com\/\$repository\/main\/package\.json/);
   assert.match(updater, /archive\/refs\/heads\/main\.zip/);
   assert.match(updater, /Start-Auto-Voucher\.bat/);
+  assert.match(updater, /exit 0\s*$/);
   assert.equal(packageJson.version, "0.2.3");
   assert.doesNotMatch(launcher, /AutoVoucher(?:Core|OCR|PDF|Setup).*\.exe/i);
 });
