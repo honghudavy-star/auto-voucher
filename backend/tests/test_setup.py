@@ -6,7 +6,12 @@ from pathlib import Path
 
 from auto_voucher.database import Database
 from auto_voucher.defaults import initialize_default_accounts, restore_default_accounts
-from auto_voucher.setup import SetupService, empty_production_state
+from auto_voucher.setup import (
+    SetupService,
+    connector_template,
+    empty_production_state,
+    ensure_state_v2,
+)
 
 
 class SetupTests(unittest.TestCase):
@@ -22,8 +27,19 @@ class SetupTests(unittest.TestCase):
     def test_new_production_state_contains_no_demo_records(self):
         state = self.database.get_state()
         self.assertEqual(state["version"], 2)
-        for key in ("enterpriseProfiles", "sourceDocuments", "events", "vouchers", "exceptions", "rules", "connectors", "auditLog"):
+        for key in (
+            "enterpriseProfiles",
+            "sourceDocuments",
+            "events",
+            "vouchers",
+            "exceptions",
+            "rules",
+            "connectors",
+            "approvalProcessingRules",
+            "auditLog",
+        ):
             self.assertEqual(state[key], [])
+        self.assertEqual(state["approvalProcessingConfirmations"], {})
         self.assertEqual(state["company"], "")
         self.assertEqual(state["ledger"], "")
         self.assertFalse(state["productionActivation"]["enabled"])
@@ -83,6 +99,121 @@ class SetupTests(unittest.TestCase):
         self.assertNotIn("businessScenarios", state)
         self.assertNotIn("demo-finance", {item["id"] for item in state["connectors"]})
         self.assertEqual(state["readiness"]["plan"]["status"], "ready")
+
+    def test_kingdee_template_uses_finweb_app_id_secret_configuration(self):
+        connector = connector_template("kingdee-k3cloud")
+        self.assertEqual(connector["authMode"], "app-id-secret-v3")
+        self.assertEqual(connector["serverUrl"], "")
+        self.assertEqual(connector["acctId"], "")
+        self.assertEqual(connector["appId"], "")
+        self.assertEqual(connector["orgNum"], "80016")
+        self.assertEqual(connector["voucherFormId"], "GL_VOUCHER")
+        self.assertEqual(connector["voucherGroup"], "PZZ47")
+        self.assertNotIn("baseUrl", connector)
+        self.assertNotIn("accountId", connector)
+        self.assertIn(
+            "FIN_OTHERS",
+            {item["formId"] for item in connector["masterDataQueries"]},
+        )
+        queries = {item["category"]: item for item in connector["masterDataQueries"]}
+        for category in (
+            "account",
+            "customer",
+            "supplier",
+            "department",
+            "employee",
+            "project",
+            "assistantData",
+            "dimensionDefinition",
+            "accountDimension",
+            "dimensionValue",
+            "exchangeRate",
+        ):
+            self.assertIn(category, queries)
+        self.assertEqual(queries["exchangeRate"]["formId"], "BD_Rate")
+        self.assertIn("FExchangeRate", queries["exchangeRate"]["fields"])
+        self.assertEqual(queries["assistantData"]["idFields"], ["FId", "FNumber"])
+        self.assertIn("FFlex6.FNumber", queries["dimensionValue"]["fields"])
+        self.assertIn(
+            "dimensionNewProject",
+            {item["category"] for item in queries["dimensionValue"]["dimensionMappings"]},
+        )
+
+    def test_visible_feishu_source_uses_dedicated_two_stage_configuration(self):
+        connector = connector_template("feishu-oa-json")
+        self.assertEqual(connector["name"], "飞书 / Lark 审批")
+        self.assertEqual(connector["adapter"], "feishu-approval-v4")
+        self.assertEqual(connector["platform"], "feishu")
+        self.assertEqual(connector["baseUrl"], "https://open.feishu.cn")
+        self.assertEqual(connector["appId"], "")
+        self.assertEqual(connector["approvalCode"], "")
+        self.assertEqual(connector["approvalFields"], [])
+        self.assertEqual(connector["fieldMapping"], {})
+        self.assertEqual(connector["fieldSources"], [])
+        self.assertEqual(connector["additionalApprovalFieldIds"], [])
+
+    def test_legacy_visible_feishu_generic_config_migrates_without_copying_secrets(self):
+        state = empty_production_state()
+        state["connectors"] = [{
+            "id": "feishu-oa-json",
+            "name": "飞书 审批 API（JSON）",
+            "adapter": "oa-json-api",
+            "baseUrl": "https://open.larksuite.com",
+            "environment": "测试环境",
+            "status": "connected",
+            "providerName": "飞书",
+        }]
+        self.assertTrue(ensure_state_v2(state))
+        connector = state["connectors"][0]
+        self.assertEqual(connector["adapter"], "feishu-approval-v4")
+        self.assertEqual(connector["name"], "飞书 / Lark 审批")
+        self.assertEqual(connector["platform"], "lark")
+        self.assertEqual(connector["status"], "not_configured")
+        self.assertEqual(connector["appId"], "")
+        self.assertEqual(connector["approvalCode"], "")
+        self.assertNotIn("appSecret", connector)
+        self.assertNotIn("accessToken", connector)
+
+    def test_existing_kingdee_query_configuration_is_extended_without_overwriting_custom_filters(self):
+        state = empty_production_state()
+        state["connectors"] = [{
+            "id": "kingdee-k3cloud",
+            "adapter": "kingdee-k3cloud-webapi-v6",
+            "authMode": "app-id-secret-v3",
+            "masterDataQueries": [{
+                "category": "account",
+                "formId": "BD_Account",
+                "fields": ["FNumber", "FName"],
+                "filterString": "FForbidStatus='A'",
+            }],
+        }]
+        self.assertTrue(ensure_state_v2(state))
+        queries = state["connectors"][0]["masterDataQueries"]
+        account = next(item for item in queries if item["formId"] == "BD_Account")
+        self.assertEqual(account["filterString"], "FForbidStatus='A'")
+        self.assertIn("BD_Customer", {item["formId"] for item in queries})
+        self.assertIn("BD_FLEXITEMDETAILV", {item["formId"] for item in queries})
+
+    def test_legacy_kingdee_password_configuration_is_invalidated_and_migrated(self):
+        state = empty_production_state()
+        state["connectors"] = [{
+            "id": "kingdee-k3cloud",
+            "adapter": "kingdee-k3cloud-webapi-v6",
+            "baseUrl": "https://erp.example.com/K3Cloud",
+            "accountId": "acct",
+            "username": "legacy-user",
+            "status": "connected",
+            "capabilities": ["query_voucher"],
+            "lastProbe": {"ok": True},
+        }]
+        self.assertTrue(ensure_state_v2(state))
+        connector = state["connectors"][0]
+        self.assertEqual(connector["serverUrl"], "https://erp.example.com/K3Cloud")
+        self.assertEqual(connector["acctId"], "acct")
+        self.assertEqual(connector["authMode"], "app-id-secret-v3")
+        self.assertEqual(connector["status"], "not_configured")
+        self.assertEqual(connector["capabilities"], [])
+        self.assertIsNone(connector["lastProbe"])
 
     def test_blank_template_can_be_profiled_and_missing_columns_are_actionable(self):
         preview = self.service.preview_template(

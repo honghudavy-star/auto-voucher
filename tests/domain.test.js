@@ -10,6 +10,8 @@ import {
   eventFromRow,
   filterLocalRecords,
   parseCsv,
+  renderSummaryTemplate,
+  resolveKingdeeExchangeRate,
   selectPostingRule,
   splitEventForPartialPayment,
   toCents,
@@ -68,14 +70,343 @@ test("标准采购付款行可以转换为业务事项", () => {
     供应商: "测试供应商",
     含税金额: "12800.00",
     审批单号: "SP-001",
+    币别: "PHP",
+    汇率: "0.0174",
   });
   assert.equal(result.amountCents, 1_280_000);
   assert.equal(result.status, "可生成");
   assert.equal(result.reference, "SP-001");
+  assert.equal(result.currency, "PHP");
+  assert.equal(result.exchangeRate, "0.0174");
   assert.equal(result.approvalStatus, "unknown");
   assert.equal(result.matchConfidence, null);
   assert.equal(result.company, "");
   assert.equal(result.ledger, "");
+});
+
+test("摘要模板使用用户可读字段标记而不是暴露正则表达式", () => {
+  assert.equal(
+    renderSummaryTemplate("员工话费充值 · {供应商/客商} · {业务日期}", event),
+    "员工话费充值 · 测试供应商 · 2026-07-24",
+  );
+});
+
+test("金蝶汇率按币别、业务日期和汇率类型匹配最新有效记录", () => {
+  const masterData = [
+    { category: "currency", code: "PRE001", name: "人民币", active: true },
+    { category: "currency", code: "PRE013", name: "菲律宾比索", active: true },
+    {
+      category: "exchangeRate",
+      code: "RATE-OLD",
+      name: "汇率体系",
+      active: true,
+      sourceAttributes: {
+        "FRATETYPEID.FNumber": "001",
+        "FCyForID.FNumber": "PRE013",
+        "FCyToID.FNumber": "PRE001",
+        FBegDate: "2026-07-01",
+        FEndDate: "2026-07-15",
+        FExchangeRate: "0.0170",
+        FDocumentStatus: "C",
+        FForbidStatus: "A",
+      },
+    },
+    {
+      category: "exchangeRate",
+      code: "RATE-CURRENT",
+      name: "汇率体系",
+      active: true,
+      sourceAttributes: {
+        "FRATETYPEID.FNumber": "001",
+        "FCyForID.FNumber": "PRE013",
+        "FCyToID.FNumber": "PRE001",
+        FBegDate: "2026-07-16",
+        FEndDate: "2026-07-31",
+        FExchangeRate: "0.0174",
+        FDocumentStatus: "C",
+        FForbidStatus: "A",
+      },
+    },
+  ];
+  assert.equal(resolveKingdeeExchangeRate(masterData, {
+    currency: "PHP",
+    accountingDate: "2026-07-24",
+    rateType: "001",
+    baseCurrency: "PRE001",
+  }), "0.0174");
+});
+
+test("多行凭证模板支持固定值、来源字段和简单计算并使用金蝶汇率", () => {
+  const masterData = [
+    { category: "currency", code: "PRE001", name: "人民币", active: true },
+    { category: "currency", code: "PRE013", name: "菲律宾比索", active: true },
+    {
+      category: "exchangeRate",
+      code: "RATE-1",
+      name: "汇率体系",
+      active: true,
+      sourceAttributes: {
+        "FRATETYPEID.FNumber": "001",
+        "FCyForID.FNumber": "PRE013",
+        "FCyToID.FNumber": "PRE001",
+        FBegDate: "2026-07-01",
+        FEndDate: "2026-07-31",
+        FExchangeRate: "0.0174",
+        FDocumentStatus: "C",
+        FForbidStatus: "A",
+      },
+    },
+  ];
+  const source = {
+    ...event,
+    type: "员工薪酬",
+    currency: "PHP",
+    amountCents: 70_800,
+    amountBreakdown: { grossCents: 70_800 },
+    summary: "员工话费充值",
+  };
+  const rule = {
+    id: "RULE-PHP",
+    name: "菲律宾话费充值",
+    version: "1.0",
+    enabled: true,
+    posting: {
+      lines: [
+        {
+          summaryTemplate: "{摘要} · {供应商/客商}",
+          accountCode: "6401.12",
+          accountName: "主营业务成本_通讯成本",
+          dimensions: {
+            department: { mode: "field", field: "department" },
+            project: { mode: "field", field: "project" },
+            supplier: { mode: "field", field: "counterparty" },
+          },
+          currency: { mode: "fixed", value: "PRE013" },
+          exchangeRateType: { mode: "fixed", value: "001" },
+          exchangeRate: { mode: "field", field: "kingdeeExchangeRate" },
+          originalAmount: { mode: "field", field: "amount" },
+          debitAmount: { mode: "calculation", calculation: "originalTimesRate" },
+          creditAmount: { mode: "fixed", value: "0" },
+        },
+        {
+          summaryTemplate: "确认往来 · {供应商/客商}",
+          accountCode: "2202.04.11",
+          accountName: "应付账款_运营成本_通讯费",
+          dimensions: {
+            department: { mode: "calculation", calculation: "previousLineValue" },
+            project: { mode: "calculation", calculation: "previousLineValue" },
+            supplier: { mode: "field", field: "counterparty" },
+          },
+          currency: { mode: "calculation", calculation: "previousLineCurrency" },
+          exchangeRateType: { mode: "calculation", calculation: "previousLineExchangeRateType" },
+          exchangeRate: { mode: "calculation", calculation: "previousLineExchangeRate" },
+          originalAmount: { mode: "fixed", value: "708.00" },
+          debitAmount: { mode: "fixed", value: "0" },
+          creditAmount: { mode: "calculation", calculation: "originalTimesRate" },
+        },
+      ],
+    },
+  };
+  const voucher = createVoucherWithRule(source, 1, rule, {
+    masterData,
+    baseCurrency: "PRE001",
+    exchangeRateType: "001",
+  });
+  assert.equal(voucher.lines.length, 2);
+  assert.equal(voucher.lines[0].currency, "PRE013");
+  assert.equal(voucher.lines[0].exchangeRate, "0.0174");
+  assert.equal(voucher.lines[0].originalAmountCents, 70_800);
+  assert.equal(voucher.lines[0].debitCents, 1_232);
+  assert.equal(voucher.lines[1].creditCents, 1_232);
+  assert.equal(validateVoucher(voucher).valid, true);
+});
+
+test("凭证场景可从审批数据处理字段读取当前有效科目", () => {
+  const masterData = [{
+    id: "MD-5602",
+    category: "account",
+    code: "5602",
+    name: "管理费用",
+    active: true,
+  }];
+  const source = {
+    ...event,
+    type: "采购付款",
+    debitAccountMasterDataId: "MD-5602",
+    debitAccountCode: "5602",
+    debitAccountName: "管理费用",
+  };
+  const rule = {
+    id: "RULE-APPROVAL-ACCOUNT",
+    name: "审批科目付款",
+    version: "1.0",
+    enabled: true,
+    posting: {
+      lines: [
+        {
+          summaryTemplate: "{摘要}",
+          accountCode: "",
+          accountName: "",
+          accountSource: { mode: "field", field: "debitAccount" },
+          currency: { mode: "fixed", value: "CNY" },
+          exchangeRateType: { mode: "fixed", value: "001" },
+          exchangeRate: { mode: "fixed", value: "1" },
+          originalAmount: { mode: "field", field: "amount" },
+          debitAmount: { mode: "field", field: "amount" },
+          creditAmount: { mode: "fixed", value: "0" },
+        },
+        {
+          summaryTemplate: "银行付款",
+          accountCode: "1002",
+          accountName: "银行存款",
+          accountSource: { mode: "fixed", field: "" },
+          currency: { mode: "fixed", value: "CNY" },
+          exchangeRateType: { mode: "fixed", value: "001" },
+          exchangeRate: { mode: "fixed", value: "1" },
+          originalAmount: { mode: "field", field: "amount" },
+          debitAmount: { mode: "fixed", value: "0" },
+          creditAmount: { mode: "field", field: "amount" },
+        },
+      ],
+    },
+  };
+  const voucher = createVoucherWithRule(source, 1, rule, {
+    masterData,
+    sourceEventIds: ["BANK-1", "APR-1"],
+  });
+
+  assert.equal(voucher.lines[0].accountCode, "5602");
+  assert.equal(voucher.lines[0].accountName, "管理费用");
+  assert.equal(voucher.lines[1].accountCode, "1002");
+  assert.deepEqual(voucher.sourceEventIds, ["BANK-1", "APR-1"]);
+  assert.equal(voucher.validation.valid, true);
+  assert.match(voucher.lines[0].explanation, /审批数据处理科目/);
+
+  assert.throws(() => createVoucherWithRule(
+    { ...source, debitAccountMasterDataId: "MD-OFF" },
+    2,
+    rule,
+    { masterData },
+  ), /不是当前有效科目主数据/);
+});
+
+test("场景选择的供应商辅助核算按目标账套唯一名称解析为编码", () => {
+  const rule = {
+    id: "RULE-DIMENSION",
+    name: "供应商辅助核算",
+    version: "1.0",
+    enabled: true,
+    posting: {
+      lines: [
+        {
+          summaryTemplate: "{摘要}",
+          accountCode: "1403",
+          accountName: "原材料",
+          dimensionBindings: [{
+            key: "supplier",
+            required: true,
+            valueSpec: { mode: "field", field: "counterparty" },
+          }],
+          currency: { mode: "fixed", value: "PRE001" },
+          exchangeRateType: { mode: "fixed", value: "001" },
+          exchangeRate: { mode: "fixed", value: "1" },
+          originalAmount: { mode: "field", field: "amount" },
+          debitAmount: { mode: "calculation", calculation: "originalAmount" },
+          creditAmount: { mode: "fixed", value: "0" },
+        },
+        {
+          summaryTemplate: "确认往来",
+          accountCode: "2202",
+          accountName: "应付账款",
+          dimensionBindings: [{
+            key: "supplier",
+            required: true,
+            valueSpec: { mode: "field", field: "counterparty" },
+          }],
+          currency: { mode: "fixed", value: "PRE001" },
+          exchangeRateType: { mode: "fixed", value: "001" },
+          exchangeRate: { mode: "fixed", value: "1" },
+          originalAmount: { mode: "field", field: "amount" },
+          debitAmount: { mode: "fixed", value: "0" },
+          creditAmount: { mode: "calculation", calculation: "originalAmount" },
+        },
+      ],
+    },
+  };
+  const voucher = createVoucherWithRule(event, 1, rule, {
+    connectorId: "kingdee-k3cloud",
+    resolveDimensionMasterData: true,
+    baseCurrency: "PRE001",
+    masterData: [
+      {
+        id: "MD-SUP-1",
+        sourceConnectorId: "kingdee-k3cloud",
+        category: "dimensionSupplier",
+        code: "SUP001",
+        name: "测试供应商",
+        active: true,
+      },
+    ],
+  });
+  assert.equal(voucher.lines[0].dimensions.supplier, "SUP001");
+  assert.equal(voucher.lines[0].dimensionRefs.supplier.status, "matched");
+  assert.equal(voucher.status, "待审核");
+  assert.equal(validateVoucher(voucher).valid, true);
+});
+
+test("辅助核算同名多编码时不自动选择并阻止凭证确认", () => {
+  const rule = {
+    id: "RULE-AMBIGUOUS-DIMENSION",
+    name: "同名供应商",
+    version: "1.0",
+    enabled: true,
+    posting: {
+      lines: [
+        {
+          summaryTemplate: "{摘要}",
+          accountCode: "1403",
+          accountName: "原材料",
+          dimensions: { supplier: { mode: "field", field: "counterparty" } },
+          requiredDimensions: ["supplier"],
+          currency: { mode: "fixed", value: "PRE001" },
+          exchangeRateType: { mode: "fixed", value: "001" },
+          exchangeRate: { mode: "fixed", value: "1" },
+          originalAmount: { mode: "field", field: "amount" },
+          debitAmount: { mode: "calculation", calculation: "originalAmount" },
+          creditAmount: { mode: "fixed", value: "0" },
+        },
+        {
+          summaryTemplate: "确认往来",
+          accountCode: "2202",
+          accountName: "应付账款",
+          dimensions: { supplier: { mode: "field", field: "counterparty" } },
+          requiredDimensions: ["supplier"],
+          currency: { mode: "fixed", value: "PRE001" },
+          exchangeRateType: { mode: "fixed", value: "001" },
+          exchangeRate: { mode: "fixed", value: "1" },
+          originalAmount: { mode: "field", field: "amount" },
+          debitAmount: { mode: "fixed", value: "0" },
+          creditAmount: { mode: "calculation", calculation: "originalAmount" },
+        },
+      ],
+    },
+  };
+  const voucher = createVoucherWithRule(event, 1, rule, {
+    connectorId: "kingdee-k3cloud",
+    resolveDimensionMasterData: true,
+    baseCurrency: "PRE001",
+    masterData: ["SUP001", "SUP002"].map((code) => ({
+      id: `MD-${code}`,
+      sourceConnectorId: "kingdee-k3cloud",
+      category: "dimensionSupplier",
+      code,
+      name: "测试供应商",
+      active: true,
+    })),
+  });
+  assert.equal(voucher.lines[0].dimensionRefs.supplier.status, "ambiguous");
+  assert.equal(voucher.status, "待处理");
+  assert.match(validateVoucher(voucher).errors[0], /匹配不唯一/);
 });
 
 test("采购付款规则生成借贷平衡草稿并保留解释", () => {
@@ -90,7 +421,7 @@ test("采购付款规则生成借贷平衡草稿并保留解释", () => {
 test("没有已启用规则时不使用默认借贷科目", () => {
   assert.throws(
     () => createVoucherWithRule(event, 1, null),
-    /未命中已启用且完整的凭证规则/,
+    /未命中已启用且完整的凭证场景/,
   );
 });
 

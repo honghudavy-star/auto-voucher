@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import shutil
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .connectors import (
@@ -16,24 +18,41 @@ from .connectors import (
     json_path_value,
 )
 from .database import Database, utc_now
-from .importers import STANDARD_FIELDS, event_from_row
+from .importers import STANDARD_FIELDS, event_from_row, suggest_mapping
 from .security import SecretStore, redact_text
 from .service import build_idempotency_key
-from .setup import connector_template, ensure_state_v2
+from .setup import (
+    APPROVAL_PROFILE_DEFAULTS,
+    KINGDEE_MASTER_DATA_QUERIES,
+    approval_profile_id,
+    connector_template,
+    ensure_state_v2,
+    legacy_approval_profile,
+)
 
 
 ALLOWED_CONFIG_FIELDS = {
     "name",
     "environment",
     "baseUrl",
+    "serverUrl",
+    "platform",
     "appId",
     "approvalCode",
     "fieldMapping",
     "accountId",
+    "acctId",
     "username",
+    "orgNum",
     "ledger",
     "voucherFormId",
+    "voucherGroup",
+    "currencyCode",
+    "exchangeRateType",
     "localeId",
+    "connectTimeout",
+    "requestTimeout",
+    "authMode",
     "approvalControlEnabled",
     "enforceTargetMasterData",
     "enforcePeriodQuery",
@@ -57,10 +76,151 @@ ALLOWED_CONFIG_FIELDS = {
 }
 
 FORBIDDEN_CONFIG_MARKERS = ("secret", "password", "token", "privatekey", "certificatepassword")
+APPROVAL_MAPPING_FIELDS = {
+    "date",
+    "counterparty",
+    "amount",
+    "currency",
+    "exchange_rate",
+    "reference",
+    "department",
+    "project",
+    "summary",
+}
+APPROVAL_SOURCE_FIELD_KEYS = {
+    "date",
+    "counterparty",
+    "amount",
+    "currency",
+    "exchangeRate",
+    "reference",
+    "company",
+    "ledger",
+    "businessType",
+    "department",
+    "project",
+    "summary",
+}
+
+AUXILIARY_DIMENSION_POLICIES: dict[str, dict[str, str]] = {
+    "department": {"label": "部门", "category": "dimensionDepartment"},
+    "project": {"label": "项目", "category": "project"},
+    "supplier": {"label": "供应商", "category": "dimensionSupplier"},
+    "customer": {"label": "客户", "category": "dimensionCustomer"},
+    "employee": {"label": "员工", "category": "dimensionEmployee"},
+    "material": {"label": "物料", "category": "dimensionMaterial"},
+    "expense": {"label": "费用项目", "category": "dimensionExpense"},
+    "organization": {"label": "组织机构", "category": "dimensionOrganization"},
+    "bank": {"label": "银行", "category": "dimensionBank"},
+    "bankAccount": {"label": "银行账号", "category": "dimensionBankAccount"},
+    "otherCounterparty": {"label": "其他往来", "category": "dimensionOtherCounterparty"},
+    "serviceType": {"label": "服务类型", "category": "dimensionServiceType"},
+    "unit": {"label": "Unit", "category": "dimensionUnit"},
+    "region": {"label": "入账地区", "category": "dimensionRegion"},
+    "oldProject": {"label": "旧项目", "category": "dimensionOldProject"},
+    "newProject": {"label": "新项目", "category": "dimensionNewProject"},
+}
+APPROVAL_SOURCE_REFERENCE_PREFIX = "source:"
+
+
+def approval_source_event_value(event: dict[str, Any], field: str) -> Any:
+    if field == "amount":
+        amount_cents = event.get("amountCents")
+        if amount_cents in (None, ""):
+            return ""
+        return str(Decimal(str(amount_cents)) / Decimal("100"))
+    event_key = {
+        "businessType": "type",
+    }.get(field, field)
+    return event.get(event_key, "")
+
+
+def resolve_approval_mapping_value(
+    state: dict[str, Any],
+    config: dict[str, Any],
+    approval_values: dict[str, Any],
+    approval_reference: str,
+    mapping_value: str,
+) -> Any:
+    if not mapping_value.startswith(APPROVAL_SOURCE_REFERENCE_PREFIX):
+        return approval_values.get(mapping_value, "")
+    source_id = mapping_value.removeprefix(APPROVAL_SOURCE_REFERENCE_PREFIX)
+    source = next(
+        (
+            item for item in config.get("fieldSources", [])
+            if str(item.get("id") or "") == source_id
+        ),
+        None,
+    )
+    if not source:
+        return ""
+    source_system = str(source.get("sourceSystem") or "")
+    matching_event = next(
+        (
+            event for event in state.get("events", [])
+            if (
+                (
+                    source_system == "local-files"
+                    and not str(event.get("sourceSystem") or "")
+                )
+                or str(event.get("sourceSystem") or "") == source_system
+            )
+            and approval_reference in {
+                str(event.get("reference") or ""),
+                str(event.get("externalId") or ""),
+            }
+        ),
+        None,
+    )
+    if not matching_event:
+        return ""
+    return approval_source_event_value(
+        matching_event,
+        str(source.get("field") or ""),
+    )
 
 
 def ensure_connector_defaults(state: dict[str, Any]) -> bool:
     return ensure_state_v2(state)
+
+
+def approval_profiles(config: dict[str, Any]) -> list[dict[str, Any]]:
+    profiles = config.setdefault("approvalProfiles", [])
+    if not profiles:
+        legacy_profile = legacy_approval_profile(config)
+        if legacy_profile:
+            profiles.append(legacy_profile)
+    return [
+        profile
+        for profile in profiles
+        if isinstance(profile, dict) and str(profile.get("approvalCode") or "").strip()
+    ]
+
+
+def approval_profile_config(
+    config: dict[str, Any],
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(config)
+    merged.update({
+        key: copy.deepcopy(value)
+        for key, value in profile.items()
+        if key != "id"
+    })
+    merged["approvalProfileId"] = str(profile.get("id") or "")
+    return merged
+
+
+def mirror_primary_approval_profile(
+    config: dict[str, Any],
+    profile: dict[str, Any],
+) -> None:
+    profiles = approval_profiles(config)
+    if not profiles or profiles[0] is not profile:
+        return
+    config["approvalCode"] = str(profile.get("approvalCode") or "")
+    for key, default in APPROVAL_PROFILE_DEFAULTS.items():
+        config[key] = copy.deepcopy(profile.get(key, default))
 
 
 def connector_lock(config: dict[str, Any]) -> str:
@@ -71,8 +231,12 @@ def connector_lock(config: dict[str, Any]) -> str:
             "adapter",
             "environment",
             "baseUrl",
+            "serverUrl",
+            "platform",
             "accountId",
-            "approvalCode",
+            "acctId",
+            "appId",
+            "orgNum",
             "ledger",
         )
     )
@@ -86,14 +250,106 @@ def parse_feishu_form(instance: dict[str, Any]) -> dict[str, Any]:
             form = json.loads(form)
         except json.JSONDecodeError:
             form = []
-    values: dict[str, Any] = {}
-    for widget in form if isinstance(form, list) else []:
-        widget_id = str(widget.get("id") or widget.get("widget_id") or "")
-        value = widget.get("value")
-        if value in (None, ""):
-            value = widget.get("name") or widget.get("text") or widget.get("value_text")
-        values[widget_id] = value
-    return values
+    collected: dict[str, list[Any]] = {}
+
+    def walk(node: Any) -> None:
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+            return
+        if not isinstance(node, dict):
+            return
+        widget_id = str(node.get("id") or node.get("widget_id") or "").strip()
+        value = node.get("value")
+        if widget_id and not isinstance(value, (dict, list)):
+            if value in (None, ""):
+                value = node.get("text") or node.get("value_text")
+            if value not in (None, ""):
+                collected.setdefault(widget_id, []).append(value)
+        for child_key in ("value", "children", "items", "fields"):
+            child = node.get(child_key)
+            if isinstance(child, (dict, list)):
+                walk(child)
+
+    walk(form)
+    return {
+        widget_id: items[0] if len(items) == 1 else items
+        for widget_id, items in collected.items()
+    }
+
+
+def normalize_feishu_mapped_value(standard_field: str, value: Any) -> Any:
+    items = value if isinstance(value, list) else [value]
+    items = [item for item in items if item not in (None, "")]
+    if not items:
+        return ""
+    if standard_field == "amount":
+        try:
+            return str(sum((Decimal(str(item)) for item in items), Decimal("0")))
+        except InvalidOperation:
+            return items[0]
+    if standard_field == "date":
+        return items[0]
+    unique_values = list(dict.fromkeys(str(item).strip() for item in items if str(item).strip()))
+    return " / ".join(unique_values)
+
+
+def approval_field_values(
+    config: dict[str, Any],
+    approval_values: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": str(field.get("id") or ""),
+            "name": str(field.get("name") or field.get("id") or ""),
+            "type": str(field.get("type") or ""),
+            "value": copy.deepcopy(approval_values.get(str(field.get("id") or ""), "")),
+        }
+        for field in config.get("approvalFields", [])
+        if str(field.get("id") or "")
+    ]
+
+
+def approval_completion_metadata(instance: dict[str, Any]) -> dict[str, str]:
+    raw_timestamp = instance.get("end_time") or instance.get("endTime")
+    try:
+        timestamp = int(str(raw_timestamp or "").strip())
+    except ValueError:
+        return {}
+    if timestamp <= 0:
+        return {}
+    seconds = timestamp / 1000 if abs(timestamp) >= 10_000_000_000 else timestamp
+    completed_at = datetime.fromtimestamp(seconds, tz=timezone.utc)
+    return {
+        "approvalCompletedAt": completed_at.isoformat(),
+        "approvalCompletedDate": completed_at.date().isoformat(),
+    }
+
+
+def feishu_approval_row(
+    state: dict[str, Any],
+    config: dict[str, Any],
+    approval_values: dict[str, Any],
+    external_id: str,
+    approval_number: str,
+) -> dict[str, Any]:
+    row: dict[str, Any] = {}
+    for standard_field, source_path in (config.get("fieldMapping") or {}).items():
+        canonical = STANDARD_FIELDS.get(standard_field)
+        if not canonical:
+            continue
+        source_value = resolve_approval_mapping_value(
+            state,
+            config,
+            approval_values,
+            external_id,
+            str(source_path),
+        )
+        row[canonical] = normalize_feishu_mapped_value(standard_field, source_value)
+    row.setdefault("业务日期", datetime.now(timezone.utc).date().isoformat())
+    row["审批单号"] = approval_number
+    row.setdefault("业务类型", config.get("businessType") or "采购付款")
+    return row
 
 
 class ConnectorService:
@@ -158,8 +414,30 @@ class ConnectorService:
             username = str(values.get("username", config.get("username")) or "").strip().lower()
             if username in {"admin", "administrator", "系统管理员", "administrator@system"}:
                 raise ValueError("生产连接器禁止使用管理员账号，请创建专用最小权限集成账号")
+        approval_code_changed = False
+        if config.get("adapter") == "feishu-approval-v4":
+            platform = str(values.get("platform", config.get("platform") or "feishu")).strip().lower()
+            if platform not in {"feishu", "lark"}:
+                raise ValueError("飞书平台必须选择中国大陆飞书或海外 Lark")
+            values["platform"] = platform
+            values["baseUrl"] = (
+                "https://open.larksuite.com"
+                if platform == "lark"
+                else "https://open.feishu.cn"
+            )
+            approval_code_changed = (
+                "approvalCode" in values
+                and str(values.get("approvalCode") or "").strip()
+                != str(config.get("approvalCode") or "").strip()
+            )
         for key, value in values.items():
             config[key] = value
+        if approval_code_changed:
+            config["approvalName"] = ""
+            config["approvalFields"] = []
+            if not values.get("fieldMapping"):
+                config["fieldMapping"] = {}
+            config["syncCursor"] = {}
         config["status"] = "configured"
         config["environmentLock"] = connector_lock(config)
         config["environmentLockedAt"] = utc_now()
@@ -172,6 +450,293 @@ class ConnectorService:
         )
         self.database.put_state(state)
         return {"state": state, "connector": config}
+
+    def configure_approval_query(
+        self,
+        connector_id: str,
+        values: dict[str, Any],
+    ) -> dict[str, Any]:
+        unknown = set(values) - {
+            "approvalCode",
+            "profileId",
+            "additionalApprovalFieldIds",
+            "fieldMapping",
+            "fieldSources",
+            "queryDateFrom",
+            "queryDateTo",
+        }
+        if unknown:
+            raise ValueError(f"不支持的审批查询配置字段：{', '.join(sorted(unknown))}")
+        state = self._state()
+        config = self._config(state, connector_id)
+        if config.get("adapter") != "feishu-approval-v4":
+            raise ValueError("只有飞书审批连接器支持审批查询与字段映射")
+        approval_code = str(values.get("approvalCode") or "").strip()
+        if not approval_code:
+            raise ValueError("审批模板编码（approval_code）不能为空")
+        profiles = config.setdefault("approvalProfiles", [])
+        if not profiles:
+            legacy_profile = legacy_approval_profile(config)
+            if legacy_profile:
+                profiles.append(legacy_profile)
+        profile_id = str(values.get("profileId") or "").strip()
+        profile = next(
+            (
+                item for item in profiles
+                if isinstance(item, dict) and str(item.get("id") or "") == profile_id
+            ),
+            None,
+        )
+        if profile_id and not profile:
+            raise ValueError("审批模板配置不存在，请刷新后重试")
+        if not profile:
+            profile = next(
+                (
+                    item for item in profiles
+                    if isinstance(item, dict)
+                    and str(item.get("approvalCode") or "").strip() == approval_code
+                ),
+                None,
+            )
+        if not profile:
+            profile = {
+                "id": approval_profile_id(approval_code),
+                "approvalCode": approval_code,
+                **copy.deepcopy(APPROVAL_PROFILE_DEFAULTS),
+            }
+            profiles.append(profile)
+        if any(
+            item is not profile
+            and str(item.get("approvalCode") or "").strip() == approval_code
+            for item in profiles
+            if isinstance(item, dict)
+        ):
+            raise ValueError("该 approval_code 已经添加")
+        if (
+            profiles
+            and profiles[0] is profile
+            and not profile.get("syncCursor")
+            and config.get("syncCursor")
+        ):
+            profile["syncCursor"] = copy.deepcopy(config["syncCursor"])
+        raw_mapping = values.get("fieldMapping") or {}
+        if not isinstance(raw_mapping, dict):
+            raise ValueError("审批字段映射格式无效")
+        raw_field_sources = values.get("fieldSources") or []
+        if not isinstance(raw_field_sources, list):
+            raise ValueError("其他来源字段格式无效")
+        if len(raw_field_sources) > 50:
+            raise ValueError("其他来源字段不能超过 50 个")
+        allowed_source_systems = {
+            "local-files",
+            *(
+                str(item.get("id") or "")
+                for item in state.get("sourceSystems", [])
+            ),
+            *(
+                str(item.get("id") or "")
+                for item in state.get("connectors", [])
+                if item.get("id") != connector_id and item.get("type") == "workflow"
+            ),
+        }
+        field_sources = []
+        known_source_ids: set[str] = set()
+        for raw_source in raw_field_sources:
+            if not isinstance(raw_source, dict):
+                raise ValueError("其他来源字段必须是对象")
+            source_id = str(raw_source.get("id") or "").strip()
+            source_system = str(raw_source.get("sourceSystem") or "").strip()
+            field = str(raw_source.get("field") or "").strip()
+            label = str(raw_source.get("label") or "").strip()
+            if not source_id or len(source_id) > 80 or source_id in known_source_ids:
+                raise ValueError("其他来源字段 ID 无效或重复")
+            if source_system not in allowed_source_systems:
+                raise ValueError(f"其他来源尚未配置：{source_system or '未选择'}")
+            if field not in APPROVAL_SOURCE_FIELD_KEYS:
+                raise ValueError(f"不支持的其他来源字段：{field or '未选择'}")
+            if not label or len(label) > 80:
+                raise ValueError("其他来源字段名称不能为空且不能超过 80 个字符")
+            known_source_ids.add(source_id)
+            field_sources.append({
+                "id": source_id,
+                "sourceSystem": source_system,
+                "field": field,
+                "label": label,
+                "matchField": "reference",
+            })
+        unsupported_mapping = set(raw_mapping) - APPROVAL_MAPPING_FIELDS
+        if unsupported_mapping:
+            raise ValueError(
+                f"不支持的审批业务字段：{', '.join(sorted(unsupported_mapping))}"
+            )
+        mapping = {
+            key: str(value or "").strip()
+            for key, value in raw_mapping.items()
+            if str(value or "").strip()
+        }
+        raw_additional_field_ids = values.get("additionalApprovalFieldIds") or []
+        if not isinstance(raw_additional_field_ids, list):
+            raise ValueError("其他审批字段格式无效")
+        if len(raw_additional_field_ids) > 50:
+            raise ValueError("其他审批字段不能超过 50 个")
+        known_approval_field_ids = {
+            str(field.get("id") or "")
+            for field in profile.get("approvalFields", [])
+            if str(field.get("id") or "")
+        }
+        additional_approval_field_ids = list(dict.fromkeys(
+            str(field_id or "").strip()
+            for field_id in raw_additional_field_ids
+            if str(field_id or "").strip()
+        ))
+        unknown_additional_field_ids = (
+            set(additional_approval_field_ids) - known_approval_field_ids
+        )
+        if unknown_additional_field_ids:
+            raise ValueError(
+                "其他审批字段不存在于当前审批模板："
+                + "、".join(sorted(unknown_additional_field_ids))
+            )
+        mapped_approval_field_ids = {
+            value
+            for value in mapping.values()
+            if not value.startswith(APPROVAL_SOURCE_REFERENCE_PREFIX)
+        }
+        additional_approval_field_ids = [
+            field_id
+            for field_id in additional_approval_field_ids
+            if field_id not in mapped_approval_field_ids
+        ]
+        missing_source_references = {
+            value.removeprefix(APPROVAL_SOURCE_REFERENCE_PREFIX)
+            for value in mapping.values()
+            if value.startswith(APPROVAL_SOURCE_REFERENCE_PREFIX)
+            and value.removeprefix(APPROVAL_SOURCE_REFERENCE_PREFIX) not in known_source_ids
+        }
+        if missing_source_references:
+            raise ValueError("字段映射引用了不存在的其他来源字段")
+        query_date_from = str(values.get("queryDateFrom") or "").strip()
+        query_date_to = str(values.get("queryDateTo") or "").strip()
+        if bool(query_date_from) != bool(query_date_to):
+            raise ValueError("审批记录完成日期必须同时填写开始日期和结束日期")
+        if query_date_from:
+            try:
+                start_date = date.fromisoformat(query_date_from)
+                end_date = date.fromisoformat(query_date_to)
+            except ValueError as exc:
+                raise ValueError("审批记录完成日期格式必须为 YYYY-MM-DD") from exc
+            if start_date > end_date:
+                raise ValueError("审批记录完成日期的开始日期不能晚于结束日期")
+            if end_date > date.today():
+                raise ValueError("审批记录完成日期的结束日期不能晚于今天")
+            if (end_date - start_date).days > 365:
+                raise ValueError("单次审批记录查询范围不能超过 366 天")
+        approval_code_changed = approval_code != str(profile.get("approvalCode") or "").strip()
+        if approval_code_changed:
+            additional_approval_field_ids = []
+        mapping_changed = (
+            mapping != dict(profile.get("fieldMapping") or {})
+            or field_sources != list(profile.get("fieldSources") or [])
+            or additional_approval_field_ids
+            != list(profile.get("additionalApprovalFieldIds") or [])
+        )
+        profile["approvalCode"] = approval_code
+        profile["fieldMapping"] = mapping
+        profile["fieldSources"] = field_sources
+        profile["additionalApprovalFieldIds"] = additional_approval_field_ids
+        config["queryDateFrom"] = query_date_from
+        config["queryDateTo"] = query_date_to
+        config["lastApprovalConfigAt"] = utc_now()
+        if approval_code_changed or mapping_changed:
+            profile["syncCursor"] = {}
+        if approval_code_changed:
+            profile["id"] = approval_profile_id(approval_code)
+            profile["approvalName"] = ""
+            profile["approvalFields"] = []
+        mirror_primary_approval_profile(config, profile)
+        if config.get("status") == "connected":
+            config["environmentLock"] = connector_lock(config)
+        self._audit(
+            state,
+            "配置审批查询",
+            config["name"],
+            (
+                f"审批模板 {approval_code or '未填写'}；"
+                f"完成日期 {query_date_from or '未填写'} 至 {query_date_to or '未填写'}；"
+                f"映射 {len(mapping)} 个业务字段；"
+                f"其他审批字段 {len(additional_approval_field_ids)} 个"
+            ),
+        )
+        self.database.put_state(state)
+        return {"state": state, "connector": config, "profile": profile}
+
+    def read_approval_fields(
+        self,
+        connector_id: str,
+        profile_id: str = "",
+    ) -> dict[str, Any]:
+        state = self._state()
+        config = self._config(state, connector_id)
+        if config.get("adapter") != "feishu-approval-v4":
+            raise ValueError("只有飞书审批连接器支持读取审批字段")
+        profiles = approval_profiles(config)
+        profile = next(
+            (
+                item for item in profiles
+                if str(item.get("id") or "") == str(profile_id or "")
+            ),
+            None,
+        )
+        if not profile:
+            profile = profiles[0] if len(profiles) == 1 and not profile_id else None
+        if not profile:
+            raise ValueError("请先保存要读取的 approval_code")
+        result = self._adapter(
+            approval_profile_config(config, profile)
+        ).read_approval_fields()
+        fields = result.get("fields") or []
+        profile["approvalName"] = str(result.get("approvalName") or "")
+        profile["approvalFields"] = fields
+        known_field_ids = {
+            str(field.get("id") or "")
+            for field in fields
+            if str(field.get("id") or "")
+        }
+        profile["additionalApprovalFieldIds"] = [
+            str(field_id)
+            for field_id in profile.get("additionalApprovalFieldIds", [])
+            if str(field_id) in known_field_ids
+        ]
+        profile["lastApprovalFieldsReadAt"] = utc_now()
+        names = [str(item.get("name") or "") for item in fields if item.get("name")]
+        suggested_by_name = suggest_mapping(names)
+        first_id_by_name = {
+            str(item.get("name") or ""): str(item.get("id") or "")
+            for item in fields
+            if item.get("name") and item.get("id")
+        }
+        mapping = dict(profile.get("fieldMapping") or {})
+        for standard_field, field_name in suggested_by_name.items():
+            if standard_field == "reference":
+                continue
+            source_id = first_id_by_name.get(field_name)
+            if source_id and not mapping.get(standard_field):
+                mapping[standard_field] = source_id
+        profile["fieldMapping"] = mapping
+        mirror_primary_approval_profile(config, profile)
+        self._audit(
+            state,
+            "读取飞书审批字段",
+            config["name"],
+            f"审批 {profile.get('approvalCode')}；读取 {len(fields)} 个字段；未保存访问令牌",
+        )
+        self.database.put_state(state)
+        return {
+            "state": state,
+            "connector": config,
+            "profile": profile,
+            "approval": result,
+        }
 
     def _secret(self, connector_id: str, name: str) -> str:
         try:
@@ -188,7 +753,7 @@ class ConnectorService:
         if config["adapter"] == "oa-json-api":
             return OaJsonApiConnector(config, self._secret(config["id"], "access_token"))
         if config["adapter"] == "kingdee-k3cloud-webapi-v6":
-            return KingdeeK3CloudConnector(config, self._secret(config["id"], "password"))
+            return KingdeeK3CloudConnector(config, self._secret(config["id"], "app_secret"))
         if config["adapter"] in {"yonyou-u8-openapi-v12", "inspur-gscloud-igix"}:
             return ConfiguredFinanceConnector(
                 config,
@@ -213,11 +778,16 @@ class ConnectorService:
             separators=(",", ":"),
         ).encode("utf-8")
         digest = hashlib.sha256(raw).hexdigest()
-        if any(
-            document.get("fullHash") == digest
-            for document in state.setdefault("sourceDocuments", [])
-        ):
-            return None
+        existing_document = next(
+            (
+                document
+                for document in state.setdefault("sourceDocuments", [])
+                if document.get("fullHash") == digest
+            ),
+            None,
+        )
+        if existing_document:
+            return existing_document
         archive = self.database.archive_dir / digest[:2] / f"{digest}.json"
         archive.parent.mkdir(parents=True, exist_ok=True)
         reserve_bytes = 50 * 1024 * 1024
@@ -302,28 +872,262 @@ class ConnectorService:
         self.database.put_state(state)
         return {"state": state, "connector": config, "report": config["lastProbe"]}
 
+    @staticmethod
+    def _refresh_approval_event(
+        existing: dict[str, Any],
+        *,
+        instance: dict[str, Any],
+        row: dict[str, Any],
+        document_id: str,
+        approval_number: str,
+        config: dict[str, Any],
+        field_values: list[dict[str, Any]],
+    ) -> bool:
+        try:
+            refreshed = event_from_row(
+                row,
+                document_id,
+                1,
+                uuid.uuid4().hex[:8],
+            )
+        except ValueError:
+            return False
+        for field in (
+            "reference",
+            "businessKey",
+            "date",
+            "counterparty",
+            "amountCents",
+            "amountBreakdown",
+            "currency",
+            "exchangeRate",
+            "department",
+            "project",
+            "summary",
+        ):
+            existing[field] = refreshed[field]
+        refreshed_source = (refreshed.get("sourceRecords") or [{}])[0]
+        refreshed_document_id = refreshed_source.get("documentId")
+        existing_source = next(
+            (
+                record for record in existing.get("sourceRecords", [])
+                if record.get("documentId") == refreshed_document_id
+            ),
+            None,
+        )
+        if existing_source:
+            existing_source["referenceFields"] = copy.deepcopy(
+                refreshed_source.get("referenceFields") or {}
+            )
+            existing_source["amountCents"] = refreshed_source.get("amountCents")
+        else:
+            existing.setdefault("sourceRecords", []).append(
+                copy.deepcopy(refreshed_source)
+            )
+        existing["matchExplanation"] = [
+            str(item).replace(
+                str(existing.get("externalId") or ""),
+                approval_number,
+            )
+            for item in existing.get("matchExplanation", [])
+        ]
+        existing["approvalNo"] = approval_number
+        existing["approvalStatus"] = "approved"
+        existing["approvalCode"] = str(config.get("approvalCode") or "")
+        existing["approvalName"] = str(config.get("approvalName") or "")
+        existing["approvalFieldValues"] = field_values
+        existing.update(approval_completion_metadata(instance))
+        selection = existing.get("counterpartyFieldSelection")
+        if isinstance(selection, dict) and str(selection.get("fieldId") or ""):
+            existing["counterpartyMappedValue"] = refreshed["counterparty"]
+            selected_field = next(
+                (
+                    field for field in field_values
+                    if str(field.get("id") or "") == str(selection.get("fieldId") or "")
+                ),
+                None,
+            )
+            selected_value = normalize_feishu_mapped_value(
+                "counterparty",
+                selected_field.get("value") if selected_field else "",
+            )
+            if selected_value not in (None, ""):
+                existing["counterparty"] = selected_value
+                selection["fieldName"] = str(
+                    selected_field.get("name")
+                    or selection.get("fieldName")
+                    or selection.get("fieldId")
+                )
+                selection.pop("unavailableAt", None)
+            else:
+                existing["counterparty"] = refreshed["counterparty"]
+                selection["unavailableAt"] = utc_now()
+        existing["lastSyncedAt"] = utc_now()
+        return True
+
+    def _backfill_approval_events_from_archives(
+        self,
+        state: dict[str, Any],
+        config: dict[str, Any],
+    ) -> int:
+        documents = {
+            str(document.get("id") or ""): document
+            for document in state.get("sourceDocuments", [])
+            if document.get("rawResponsePreserved")
+            and document.get("archivePath")
+        }
+        current_approval_code = str(config.get("approvalCode") or "")
+        backfilled = 0
+        for existing in state.get("events", []):
+            if existing.get("sourceSystem") != "feishu":
+                continue
+            event_approval_code = str(existing.get("approvalCode") or "")
+            if (
+                current_approval_code
+                and event_approval_code
+                and event_approval_code != current_approval_code
+            ):
+                continue
+            document = next(
+                (
+                    documents.get(str(document_id))
+                    for document_id in existing.get("sourceDocumentIds", [])
+                    if documents.get(str(document_id))
+                ),
+                None,
+            )
+            if not document:
+                continue
+            archive_path = self.database.data_dir / str(document["archivePath"])
+            try:
+                instance = json.loads(archive_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            external_id = str(
+                existing.get("externalId")
+                or document.get("externalId")
+                or instance.get("instance_code")
+                or instance.get("instance_id")
+                or ""
+            )
+            if not external_id:
+                continue
+            approval_number = str(
+                instance.get("serial_number")
+                or existing.get("approvalNo")
+                or external_id
+            ).strip()
+            values = parse_feishu_form(instance)
+            row = feishu_approval_row(
+                state,
+                config,
+                values,
+                external_id,
+                approval_number,
+            )
+            if self._refresh_approval_event(
+                existing,
+                instance=instance,
+                row=row,
+                document_id=str(document.get("id") or ""),
+                approval_number=approval_number,
+                config=config,
+                field_values=approval_field_values(config, values),
+            ):
+                backfilled += 1
+        return backfilled
+
     def sync_approvals(self, connector_id: str = "feishu-approval") -> dict[str, Any]:
         state = self._state()
         config = self._config(state, connector_id)
+        is_feishu_connector = config.get("adapter") == "feishu-approval-v4"
+        profiles = approval_profiles(config) if is_feishu_connector else []
+        if is_feishu_connector:
+            if not profiles:
+                raise ValueError("请先填写 approval_code 并读取审批字段")
+            if not (
+                str(config.get("queryDateFrom") or "").strip()
+                and str(config.get("queryDateTo") or "").strip()
+            ):
+                raise ValueError("请先选择审批记录完成日期范围")
+            for profile in profiles:
+                mapping = profile.get("fieldMapping") or {}
+                missing = [
+                    label
+                    for key, label in (
+                        ("date", "业务日期"),
+                        ("counterparty", "供应商/客商"),
+                        ("amount", "金额"),
+                    )
+                    if not mapping.get(key)
+                ]
+                if missing:
+                    profile_label = (
+                        str(profile.get("approvalName") or "").strip()
+                        or str(profile.get("approvalCode") or "")
+                    )
+                    raise ValueError(
+                        f"请先完成审批模板 {profile_label} 的字段映射：{'、'.join(missing)}"
+                    )
         self._assert_connected_and_locked(config)
         if not {"approval_incremental_sync", "json_record_sync"}.intersection(config.get("capabilities", [])):
             raise ValueError("连接器未探测到 OA JSON 同步能力")
-        adapter = self._adapter(config)
-        cursor = config.get("syncCursor")
-        approved_items: list[dict[str, Any]] = []
+        approved_items: list[tuple[dict[str, Any], dict[str, Any]]] = []
         has_more = False
-        for _page in range(20):
-            page = adapter.sync_approved_instances(cursor)
-            approved_items.extend(page["items"])
-            cursor = page["cursor"]
-            has_more = bool(page.get("hasMore"))
-            if not has_more:
-                break
+        sync_cursors: dict[str, Any] = {}
         created = 0
         skipped = 0
-        for instance in approved_items:
-            is_feishu = config.get("adapter") == "feishu-approval-v4"
-            source_system = "feishu" if is_feishu else config["id"]
+        backfilled = 0
+        if is_feishu_connector:
+            for profile in profiles:
+                item_config = approval_profile_config(config, profile)
+                item_config["_knownInstanceCodes"] = [
+                    str(event.get("externalId") or "").strip()
+                    for event in state.get("events", [])
+                    if event.get("sourceSystem") == "feishu"
+                    and str(event.get("approvalCode") or "").strip()
+                    == str(profile.get("approvalCode") or "").strip()
+                    and str(event.get("externalId") or "").strip()
+                ]
+                adapter = self._adapter(item_config)
+                cursor = profile.get("syncCursor")
+                profile_has_more = False
+                for _page in range(20):
+                    page = adapter.sync_approved_instances(cursor)
+                    approved_items.extend(
+                        (instance, item_config)
+                        for instance in page["items"]
+                    )
+                    cursor = page["cursor"]
+                    profile_has_more = bool(page.get("hasMore"))
+                    if not profile_has_more:
+                        break
+                profile["syncCursor"] = cursor
+                sync_cursors[str(profile.get("id") or "")] = cursor
+                has_more = has_more or profile_has_more
+                backfilled += self._backfill_approval_events_from_archives(
+                    state,
+                    item_config,
+                )
+            mirror_primary_approval_profile(config, profiles[0])
+        else:
+            adapter = self._adapter(config)
+            cursor = config.get("syncCursor")
+            for _page in range(20):
+                page = adapter.sync_approved_instances(cursor)
+                approved_items.extend(
+                    (instance, config)
+                    for instance in page["items"]
+                )
+                cursor = page["cursor"]
+                has_more = bool(page.get("hasMore"))
+                if not has_more:
+                    break
+            config["syncCursor"] = cursor
+            sync_cursors["default"] = cursor
+        for instance, item_config in approved_items:
+            is_feishu = item_config.get("adapter") == "feishu-approval-v4"
+            source_system = "feishu" if is_feishu else item_config["id"]
             external_id = str(
                 (
                     instance.get("instance_code")
@@ -332,11 +1136,44 @@ class ConnectorService:
                     or ""
                 )
                 if is_feishu
-                else json_path_value(instance, str(config.get("externalIdPath") or "id"), "")
+                else json_path_value(instance, str(item_config.get("externalIdPath") or "id"), "")
             )
             if not external_id:
                 skipped += 1
                 continue
+            approval_number = (
+                str(instance.get("serial_number") or "").strip() or external_id
+                if is_feishu
+                else external_id
+            )
+            mapping = item_config.get("fieldMapping") or {}
+            values = parse_feishu_form(instance) if is_feishu else instance
+            stored_approval_fields = (
+                approval_field_values(item_config, values)
+                if is_feishu
+                else []
+            )
+            if is_feishu:
+                row = feishu_approval_row(
+                    state,
+                    item_config,
+                    values,
+                    external_id,
+                    approval_number,
+                )
+            else:
+                row = {}
+                for standard_field, source_path in mapping.items():
+                    canonical = STANDARD_FIELDS.get(standard_field)
+                    if canonical:
+                        row[canonical] = json_path_value(
+                            values,
+                            str(source_path),
+                            "",
+                        )
+                row.setdefault("业务日期", datetime.now(timezone.utc).date().isoformat())
+                row.setdefault("审批单号", external_id)
+                row.setdefault("业务类型", item_config.get("businessType") or "采购付款")
             existing = next(
                 (
                     event for event in state.get("events", [])
@@ -346,30 +1183,23 @@ class ConnectorService:
                 None,
             )
             if existing:
-                existing["approvalStatus"] = "approved"
-                existing["lastSyncedAt"] = utc_now()
+                self._refresh_approval_event(
+                    existing,
+                    instance=instance,
+                    row=row,
+                    document_id=(existing.get("sourceDocumentIds") or [""])[0],
+                    approval_number=approval_number,
+                    config=item_config,
+                    field_values=stored_approval_fields,
+                )
                 skipped += 1
                 continue
-            mapping = config.get("fieldMapping") or {}
-            row: dict[str, Any] = {}
-            values = parse_feishu_form(instance) if is_feishu else instance
-            for standard_field, source_path in mapping.items():
-                canonical = STANDARD_FIELDS.get(standard_field)
-                if canonical:
-                    row[canonical] = (
-                        values.get(str(source_path), "")
-                        if is_feishu
-                        else json_path_value(values, str(source_path), "")
-                    )
-            row.setdefault("业务日期", datetime.now(timezone.utc).date().isoformat())
-            row.setdefault("审批单号", external_id)
-            row.setdefault("业务类型", config.get("businessType") or "采购付款")
             document = self._archive_json_response(
                 state,
                 name=(
                     f"飞书审批_{external_id}.json"
                     if is_feishu
-                    else f"{config.get('providerName') or config.get('name')}_{external_id}.json"
+                    else f"{item_config.get('providerName') or item_config.get('name')}_{external_id}.json"
                 ),
                 document_type="飞书审批原始响应" if is_feishu else "OA API JSON 原始响应",
                 source_system=source_system,
@@ -380,34 +1210,51 @@ class ConnectorService:
                 skipped += 1
                 continue
             document_id = document["id"]
+            exception_title = f"OA 记录 {external_id} 无法创建业务事项"
             try:
                 event = event_from_row(row, document_id, 1, uuid.uuid4().hex[:8])
             except ValueError as exc:
-                state["exceptions"].insert(0, {
-                    "id": f"EX-{uuid.uuid4().hex[:8].upper()}",
-                    "eventId": None,
-                    "documentIds": [document_id],
-                    "type": "流程字段映射缺失",
-                    "severity": "阻断",
-                    "title": f"OA 记录 {external_id} 无法创建业务事项",
-                    "detail": str(exc),
-                    "suggestion": "在连接器中完成日期、供应商、金额和审批单号字段映射后重新同步。",
-                    "status": "待处理",
-                })
+                if not any(
+                    item.get("type") == "流程字段映射缺失"
+                    and item.get("title") == exception_title
+                    for item in state.get("exceptions", [])
+                ):
+                    state["exceptions"].insert(0, {
+                        "id": f"EX-{uuid.uuid4().hex[:8].upper()}",
+                        "eventId": None,
+                        "documentIds": [document_id],
+                        "type": "流程字段映射缺失",
+                        "severity": "阻断",
+                        "title": exception_title,
+                        "detail": str(exc),
+                        "suggestion": "在“审批数据”页面完成业务日期、供应商和金额字段映射后重新同步。",
+                        "status": "待处理",
+                    })
                 skipped += 1
             else:
+                state["exceptions"] = [
+                    item for item in state.get("exceptions", [])
+                    if not (
+                        item.get("type") == "流程字段映射缺失"
+                        and item.get("title") == exception_title
+                    )
+                ]
                 event.update({
                     "sourceSystem": source_system,
                     "externalId": external_id,
+                    "approvalNo": approval_number,
                     "approvalStatus": "approved",
+                    "approvalCode": str(item_config.get("approvalCode") or ""),
+                    "approvalName": str(item_config.get("approvalName") or ""),
+                    "approvalFieldValues": stored_approval_fields,
                     "sourceVerified": True,
                     "financeReviewed": False,
                     "pushAllowed": False,
                     "lastSyncedAt": utc_now(),
                 })
+                event.update(approval_completion_metadata(instance))
                 state["events"].insert(0, event)
                 created += 1
-        config["syncCursor"] = cursor
         config["lastSyncAt"] = utc_now()
         log = {
             "id": f"SYNC-{uuid.uuid4().hex[:10].upper()}",
@@ -415,14 +1262,20 @@ class ConnectorService:
             "status": "completed",
             "created": created,
             "skipped": skipped,
-            "cursor": cursor,
+            "backfilled": backfilled,
+            "cursor": sync_cursors,
             "hasMore": has_more,
             "at": utc_now(),
         }
         state["syncLog"].insert(0, log)
-        self._audit(state, "同步审批", config["name"], f"新增 {created}，跳过或更新 {skipped}")
+        self._audit(
+            state,
+            "同步审批",
+            config["name"],
+            f"新增 {created}，跳过或更新 {skipped}，归档回填 {backfilled}",
+        )
         self.database.put_state(state)
-        return {"state": state, "sync": log}
+        return {"state": state, "connector": config, "sync": log}
 
     def sync_master_data(self, connector_id: str = "kingdee-k3cloud") -> dict[str, Any]:
         state = self._state()
@@ -432,13 +1285,33 @@ class ConnectorService:
             raise ValueError("连接器未探测到基础资料查询能力")
         adapter = self._adapter(config)
         created = 0
+        categories: list[dict[str, Any]] = []
+        first_error: ConnectorError | None = None
         for query in config.get("masterDataQueries", []):
             fields = list(query.get("fields") or ["FNumber", "FName"])
-            rows = adapter.query_master_data(
-                str(query.get("formId") or ""),
-                fields,
-                str(query.get("filterString") or ""),
-            )
+            category = str(query.get("category") or query.get("formId") or "uncategorized")
+            form_id = str(query.get("formId") or "")
+            try:
+                rows = adapter.query_master_data(
+                    form_id,
+                    fields,
+                    str(query.get("filterString") or ""),
+                    int(query.get("limit") or 100_000),
+                )
+            except ConnectorError as exc:
+                optional = bool(query.get("optional"))
+                if not optional:
+                    first_error = first_error or exc
+                categories.append({
+                    "category": category,
+                    "formId": form_id,
+                    "status": "unavailable" if optional else "failed",
+                    "rows": 0,
+                    "created": 0,
+                    "errorCode": exc.code,
+                    "message": str(exc),
+                })
+                continue
             self._archive_json_response(
                 state,
                 name=(
@@ -458,43 +1331,395 @@ class ConnectorService:
                     "rows": rows,
                 },
             )
-            for raw_row in rows:
-                row = dict(zip(fields, raw_row)) if isinstance(raw_row, list) else raw_row
-                code = str(row.get(fields[0]) or "").strip()
-                name = str(row.get(fields[1]) or "").strip()
-                if not code or not name:
-                    continue
-                current = next(
-                    (
-                        item for item in state.setdefault("masterData", [])
-                        if item.get("sourceConnectorId") == connector_id
-                        and item.get("category") == query.get("category")
-                        and item.get("code") == code
+            category_created = 0
+            logical_results: list[dict[str, Any]] = []
+            logical_queries = query.get("dimensionMappings") or [query]
+            for logical_query in logical_queries:
+                logical_category = str(logical_query.get("category") or category)
+                code_field = str(logical_query.get("codeField") or query.get("codeField") or fields[0])
+                name_field = str(logical_query.get("nameField") or query.get("nameField") or fields[min(1, len(fields) - 1)])
+                id_fields = [
+                    str(field) for field in (
+                        logical_query.get("idFields")
+                        or query.get("idFields")
+                        or ([query.get("idField")] if query.get("idField") else [])
+                    )
+                    if field
+                ]
+                current_by_key: dict[str, dict[str, Any]] = {}
+                for item in state.setdefault("masterData", []):
+                    if (
+                        item.get("sourceConnectorId") == connector_id
+                        and item.get("category") == logical_category
                         and item.get("active", True)
-                    ),
-                    None,
-                )
-                if current and current.get("name") == name:
-                    continue
-                version = int(current.get("version", 0)) + 1 if current else 1
-                if current:
-                    current["active"] = False
-                    current["supersededAt"] = utc_now()
-                state["masterData"].append({
-                    "id": f"MD-{uuid.uuid4().hex[:10].upper()}",
-                    "category": query.get("category"),
-                    "code": code,
-                    "name": name,
-                    "version": version,
-                    "active": True,
-                    "sourceConnectorId": connector_id,
-                    "importedAt": utc_now(),
+                    ):
+                        if (
+                            query.get("replaceLegacyIdentity")
+                            and id_fields
+                            and "::" not in str(item.get("sourceExternalId") or "")
+                        ):
+                            item["active"] = False
+                            item["supersededAt"] = utc_now()
+                            continue
+                        item_key = str(item.get("sourceExternalId") or item.get("code") or "")
+                        if item_key:
+                            current_by_key[item_key] = item
+                candidates: dict[str, list[tuple[str, str, str, dict[str, Any]]]] = {}
+                for raw_row in rows:
+                    row = dict(zip(fields, raw_row)) if isinstance(raw_row, list) else raw_row
+                    code = str(row.get(code_field) or "").strip()
+                    name = str(row.get(name_field) or "").strip()
+                    identity_parts = [str(row.get(field) or "").strip() for field in id_fields]
+                    source_external_id = (
+                        "::".join(identity_parts)
+                        if identity_parts and all(identity_parts)
+                        else ""
+                    )
+                    if not code or not name:
+                        continue
+                    item_key = source_external_id or code
+                    candidates.setdefault(item_key, []).append((code, name, source_external_id, row))
+                logical_created = 0
+                for item_key, item_candidates in candidates.items():
+                    name_counts: dict[str, int] = {}
+                    for _code, candidate_name, _external_id, _row in item_candidates:
+                        name_counts[candidate_name] = name_counts.get(candidate_name, 0) + 1
+                    code, name, source_external_id, row = min(
+                        item_candidates,
+                        key=lambda candidate: (
+                            -name_counts[candidate[1]],
+                            candidate[1],
+                            candidate[0],
+                        ),
+                    )
+                    current = current_by_key.get(item_key)
+                    if current and current.get("name") == name:
+                        continue
+                    version = int(current.get("version", 0)) + 1 if current else 1
+                    if current:
+                        current["active"] = False
+                        current["supersededAt"] = utc_now()
+                    new_item = {
+                        "id": f"MD-{uuid.uuid4().hex[:10].upper()}",
+                        "category": logical_category,
+                        "categoryLabel": logical_query.get("categoryLabel") or query.get("categoryLabel"),
+                        "code": code,
+                        "name": name,
+                        "version": version,
+                        "active": True,
+                        "sourceConnectorId": connector_id,
+                        "sourceExternalId": source_external_id or None,
+                        "sourceAttributes": {
+                            key: value for key, value in row.items()
+                            if key not in {code_field, name_field, *id_fields}
+                        },
+                        "importedAt": utc_now(),
+                    }
+                    state["masterData"].append(new_item)
+                    current_by_key[item_key] = new_item
+                    created += 1
+                    category_created += 1
+                    logical_created += 1
+                logical_results.append({
+                    "category": logical_category,
+                    "rows": len(candidates),
+                    "created": logical_created,
                 })
-                created += 1
+            categories.append({
+                "category": category,
+                "formId": form_id,
+                "status": "completed" if rows else "empty",
+                "rows": len(rows),
+                "created": category_created,
+                "dimensions": logical_results if query.get("dimensionMappings") else [],
+            })
         config["lastMasterDataSyncAt"] = utc_now()
-        self._audit(state, "同步基础资料", config["name"], f"新增或更新 {created} 条")
+        failed_count = sum(item["status"] == "failed" for item in categories)
+        unavailable_count = sum(item["status"] == "unavailable" for item in categories)
+        successful_count = sum(item["status"] in {"completed", "empty"} for item in categories)
+        status = (
+            "failed" if categories and successful_count == 0
+            else "completed_with_warnings" if failed_count
+            else "completed"
+        )
+        sync = {
+            "id": f"SYNC-{uuid.uuid4().hex[:10].upper()}",
+            "connectorId": connector_id,
+            "operation": "master-data",
+            "status": status,
+            "created": created,
+            "categories": categories,
+            "at": config["lastMasterDataSyncAt"],
+        }
+        state.setdefault("syncLog", []).insert(0, sync)
+        self._audit(
+            state,
+            "同步基础资料",
+            config["name"],
+            (
+                f"查询 {len(categories)} 类，成功 {successful_count} 类，"
+                f"当前账套不可用 {unavailable_count} 类，失败 {failed_count} 类，"
+                f"新增或更新 {created} 条"
+            ),
+        )
         self.database.put_state(state)
-        return {"state": state, "created": created, "syncedAt": config["lastMasterDataSyncAt"]}
+        if status == "failed" and first_error:
+            raise first_error
+        return {
+            "state": state,
+            "created": created,
+            "syncedAt": config["lastMasterDataSyncAt"],
+            "sync": sync,
+        }
+
+    @staticmethod
+    def _dimension_query_profile(
+        config: dict[str, Any],
+        category: str,
+    ) -> dict[str, Any] | None:
+        queries = (
+            KINGDEE_MASTER_DATA_QUERIES
+            if config.get("adapter") == "kingdee-k3cloud-webapi-v6"
+            else config.get("masterDataQueries", [])
+        )
+        for query in queries:
+            logical_queries = query.get("dimensionMappings") or [query]
+            for logical in logical_queries:
+                if str(logical.get("category") or query.get("category") or "") != category:
+                    continue
+                fields = [str(field) for field in query.get("fields") or ["FNumber", "FName"]]
+                return {
+                    "formId": str(query.get("formId") or ""),
+                    "fields": fields,
+                    "codeField": str(logical.get("codeField") or query.get("codeField") or fields[0]),
+                }
+        return None
+
+    def _resolve_voucher_dimensions(
+        self,
+        state: dict[str, Any],
+        config: dict[str, Any],
+        voucher: dict[str, Any],
+        connector_id: str,
+    ) -> dict[str, Any]:
+        resolved_voucher = copy.deepcopy(voucher)
+        issues: list[dict[str, Any]] = []
+        matches: list[dict[str, Any]] = []
+        live_groups: dict[str, dict[str, Any]] = {}
+        dimension_field_map = config.get("dimensionFieldMap") or {}
+        enforce = config.get("enforceTargetMasterData") is not False
+
+        def issue(
+            *,
+            line_no: int,
+            key: str,
+            label: str,
+            raw_value: str,
+            status: str,
+            message: str,
+        ) -> None:
+            issues.append({
+                "lineNo": line_no,
+                "key": key,
+                "label": label,
+                "input": raw_value[:160],
+                "status": status,
+                "message": message,
+            })
+
+        active_by_category: dict[str, list[dict[str, Any]]] = {}
+        for item in state.get("masterData", []):
+            if (
+                item.get("sourceConnectorId") == connector_id
+                and item.get("active", True)
+            ):
+                active_by_category.setdefault(str(item.get("category") or ""), []).append(item)
+
+        for line_index, line in enumerate(resolved_voucher.get("lines", []), start=1):
+            dimensions = line.get("dimensions") or {}
+            required = {str(name) for name in line.get("requiredDimensions", [])}
+            references = line.setdefault("dimensionRefs", {})
+            for key in sorted(set(dimensions) | required):
+                policy = AUXILIARY_DIMENSION_POLICIES.get(key)
+                raw_value = str(dimensions.get(key) or "").strip()
+                label = policy["label"] if policy else key
+                if not raw_value:
+                    if key in required:
+                        issue(
+                            line_no=line_index,
+                            key=key,
+                            label=label,
+                            raw_value="",
+                            status="required_missing",
+                            message=f"第 {line_index} 行缺少必填辅助核算：{label}",
+                        )
+                    continue
+                if not policy:
+                    issue(
+                        line_no=line_index,
+                        key=key,
+                        label=label,
+                        raw_value=raw_value,
+                        status="unsupported",
+                        message=f"第 {line_index} 行使用了不受支持的辅助核算类型：{key}",
+                    )
+                    continue
+                if not dimension_field_map.get(key):
+                    issue(
+                        line_no=line_index,
+                        key=key,
+                        label=label,
+                        raw_value=raw_value,
+                        status="mapping_missing",
+                        message=f"第 {line_index} 行{label}缺少目标凭证字段映射",
+                    )
+                    continue
+                category = policy["category"]
+                candidates = active_by_category.get(category, [])
+                normalized = raw_value.casefold()
+                code_matches = [
+                    item for item in candidates
+                    if str(item.get("code") or "").strip().casefold() == normalized
+                ]
+                name_matches = [
+                    item for item in candidates
+                    if str(item.get("name") or "").strip().casefold() == normalized
+                ]
+                selected = code_matches or name_matches
+                if not candidates:
+                    issue(
+                        line_no=line_index,
+                        key=key,
+                        label=label,
+                        raw_value=raw_value,
+                        status="unsynced",
+                        message=f"第 {line_index} 行{label}主数据尚未从目标账套同步",
+                    )
+                    continue
+                if not selected:
+                    issue(
+                        line_no=line_index,
+                        key=key,
+                        label=label,
+                        raw_value=raw_value,
+                        status="missing",
+                        message=f"第 {line_index} 行目标账套不存在有效{label}：{raw_value}",
+                    )
+                    continue
+                if len(selected) != 1:
+                    issue(
+                        line_no=line_index,
+                        key=key,
+                        label=label,
+                        raw_value=raw_value,
+                        status="ambiguous",
+                        message=f"第 {line_index} 行{label}“{raw_value}”匹配到多个有效编码",
+                    )
+                    continue
+                master = selected[0]
+                code = str(master.get("code") or "").strip()
+                line["dimensions"][key] = code
+                reference = {
+                    "input": raw_value,
+                    "code": code,
+                    "name": str(master.get("name") or "").strip(),
+                    "label": label,
+                    "masterCategory": category,
+                    "masterDataId": str(master.get("id") or ""),
+                    "status": "matched",
+                }
+                references[key] = reference
+                match = {
+                    "lineNo": line_index,
+                    "key": key,
+                    **reference,
+                }
+                matches.append(match)
+                live_groups.setdefault(category, {
+                    "codes": set(),
+                    "matches": [],
+                })
+                live_groups[category]["codes"].add(code)
+                live_groups[category]["matches"].append(match)
+
+        if enforce and matches and not issues:
+            adapter = self._adapter(config)
+            for category, group in live_groups.items():
+                profile = self._dimension_query_profile(config, category)
+                if not profile or not profile["formId"]:
+                    for match in group["matches"]:
+                        issue(
+                            line_no=match["lineNo"],
+                            key=match["key"],
+                            label=match["label"],
+                            raw_value=match["input"],
+                            status="query_unavailable",
+                            message=f"{match['label']}缺少允许的目标主数据查询配置",
+                        )
+                    continue
+                escaped = [
+                    str(code).replace("'", "''")
+                    for code in sorted(group["codes"])
+                ]
+                quoted_codes = ",".join(f"'{code}'" for code in escaped)
+                filter_string = (
+                    f"{profile['codeField']}='{escaped[0]}'"
+                    if len(escaped) == 1
+                    else f"{profile['codeField']} IN ({quoted_codes})"
+                )
+                try:
+                    rows = adapter.query_master_data(
+                        profile["formId"],
+                        profile["fields"],
+                        filter_string,
+                        max(len(escaped) * 3, 10),
+                    )
+                except ConnectorError as exc:
+                    for match in group["matches"]:
+                        issue(
+                            line_no=match["lineNo"],
+                            key=match["key"],
+                            label=match["label"],
+                            raw_value=match["input"],
+                            status="query_failed",
+                            message=f"{match['label']}目标主数据实时查询失败：{exc.message}",
+                        )
+                    continue
+                returned_codes = {
+                    str(
+                        (dict(zip(profile["fields"], row)) if isinstance(row, list) else row)
+                        .get(profile["codeField"]) or ""
+                    ).strip()
+                    for row in rows
+                }
+                for match in group["matches"]:
+                    if match["code"] not in returned_codes:
+                        issue(
+                            line_no=match["lineNo"],
+                            key=match["key"],
+                            label=match["label"],
+                            raw_value=match["input"],
+                            status="remote_missing",
+                            message=(
+                                f"第 {match['lineNo']} 行{match['label']}编码 "
+                                f"{match['code']} 未通过目标账套实时复核"
+                            ),
+                        )
+                    else:
+                        match["status"] = "live_matched"
+                        match["verifiedAt"] = utc_now()
+                        line = resolved_voucher["lines"][match["lineNo"] - 1]
+                        line["dimensionRefs"][match["key"]].update({
+                            "status": "live_matched",
+                            "verifiedAt": match["verifiedAt"],
+                        })
+
+        return {
+            "ok": not issues,
+            "resolvedVoucher": resolved_voucher,
+            "matches": matches,
+            "issues": issues,
+        }
 
     def preflight(
         self,
@@ -557,7 +1782,7 @@ class ConnectorService:
         check(
             "生产启用",
             production_allowed,
-            "测试账套可保存草稿；生产账套必须先通过测试上线门槛",
+            "测试账套可保存草稿；生产账套必须先完成生产启用验证",
         )
         period = str(voucher.get("period") or "")
         if config.get("enforcePeriodQuery"):
@@ -590,19 +1815,52 @@ class ConnectorService:
             master_ok,
             "已同步并存在" if master_ok else f"缺少目标科目：{', '.join(missing_accounts)}",
         )
-        dimensions_ok = all(
-            all(line.get("dimensions", {}).get(name) for name in line.get("requiredDimensions", []))
-            for line in voucher.get("lines", [])
+        missing_required_dimensions = [
+            f"第 {line_index} 行 {AUXILIARY_DIMENSION_POLICIES.get(name, {}).get('label', name)}"
+            for line_index, line in enumerate(voucher.get("lines", []), start=1)
+            for name in line.get("requiredDimensions", [])
+            if not line.get("dimensions", {}).get(name)
+        ]
+        dimensions_ok = not missing_required_dimensions
+        check(
+            "辅助核算",
+            dimensions_ok,
+            (
+                "必填辅助核算已填写"
+                if dimensions_ok
+                else f"缺少必填辅助核算：{', '.join(missing_required_dimensions)}"
+            ),
         )
-        check("辅助核算", dimensions_ok, "必填辅助核算已填写")
+        dimension_validation = self._resolve_voucher_dimensions(
+            state,
+            config,
+            voucher,
+            connector_id,
+        )
+        dimension_detail = (
+            f"已验证 {len(dimension_validation['matches'])} 个辅助核算引用"
+            if dimension_validation["ok"]
+            else dimension_validation["issues"][0]["message"]
+        )
+        check("辅助核算主数据", dimension_validation["ok"], dimension_detail)
         report = {
             "ok": all(item["status"] == "passed" for item in checks),
             "connectorId": connector_id,
             "environment": config.get("environment"),
             "checkedAt": utc_now(),
             "checks": checks,
+            "dimensionValidation": {
+                "matches": dimension_validation["matches"],
+                "issues": dimension_validation["issues"],
+            },
         }
-        return {"state": state, "voucher": voucher, "connector": config, "report": report}
+        return {
+            "state": state,
+            "voucher": voucher,
+            "resolvedVoucher": dimension_validation["resolvedVoucher"],
+            "connector": config,
+            "report": report,
+        }
 
     def push_voucher(
         self,
@@ -613,9 +1871,19 @@ class ConnectorService:
         preflight = self.preflight(voucher_id, connector_id, expected_environment)
         if not preflight["report"]["ok"]:
             failed = next(item for item in preflight["report"]["checks"] if item["status"] == "failed")
+            state = preflight["state"]
+            voucher = preflight["voucher"]
+            self._audit(
+                state,
+                "推送前校验失败",
+                voucher.get("number", voucher_id),
+                f"{failed['name']}：{failed['detail']}",
+            )
+            self.database.put_state(state)
             raise ValueError(f"推送前校验失败：{failed['name']}（{failed['detail']}）")
         state = preflight["state"]
         voucher = preflight["voucher"]
+        resolved_voucher = preflight["resolvedVoucher"]
         config = preflight["connector"]
         adapter = self._adapter(config)
         idempotency_key = build_idempotency_key(voucher)
@@ -654,7 +1922,7 @@ class ConnectorService:
         voucher["status"] = "推送中"
         self.database.put_state(state)
         try:
-            saved = adapter.save_voucher_draft(voucher, idempotency_key)
+            saved = adapter.save_voucher_draft(resolved_voucher, idempotency_key)
             remote = adapter.query_voucher(
                 number=saved.get("externalNumber", ""),
                 external_id=saved.get("externalId", ""),

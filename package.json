@@ -5,16 +5,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "setup:python": "python3 -m pip install -e .",
-    "serve": "PYTHONPATH=backend python3 -m auto_voucher --no-browser",
-    "start": "npm run build && PYTHONPATH=backend python3 -m auto_voucher",
+    "setup:python": "python3 -m venv .venv && .venv/bin/python -m pip install -e .",
+    "serve": "PYTHONPATH=backend .venv/bin/python -m auto_voucher --no-browser",
+    "start": "npm run build && PYTHONPATH=backend .venv/bin/python -m auto_voucher",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --test tests/*.test.js",
-    "test:backend": "PYTHONPATH=backend python3 -m unittest discover -s backend/tests -v",
+    "test:backend": "PYTHONPATH=backend .venv/bin/python -m unittest discover -s backend/tests -v",
     "check": "npm test && npm run test:backend && npm run build"
   },
   "devDependencies": {
+    "@iconify-json/fluent-color": "^1.2.21",
+    "unplugin-icons": "^23.0.1",
     "vite": "^7.0.4"
   }
 }

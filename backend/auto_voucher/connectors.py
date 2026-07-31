@@ -6,7 +6,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from http.cookiejar import CookieJar
 from typing import Any, Protocol
 
@@ -206,7 +208,17 @@ class OaJsonApiConnector:
 
 class FeishuApprovalConnector:
     connector_type = "feishu-approval-v4"
-    capabilities = ("approval_incremental_sync", "approval_instance_query")
+    sync_cursor_version = 6
+    initial_backfill_days = 365
+    capabilities = (
+        "approval_definition_read",
+        "approval_incremental_sync",
+        "approval_instance_query",
+    )
+    platform_base_urls = {
+        "feishu": "https://open.feishu.cn",
+        "lark": "https://open.larksuite.com",
+    }
 
     def __init__(
         self,
@@ -217,13 +229,24 @@ class FeishuApprovalConnector:
         self.config = config
         self.app_secret = app_secret
         self.transport = transport or JsonHttpTransport()
-        self.base_url = normalize_base_url(
-            config.get("baseUrl") or "https://open.feishu.cn",
-            production=config.get("environment") == "生产环境",
-        )
+        configured_platform = str(config.get("platform") or "").strip().lower()
+        if not configured_platform:
+            configured_platform = (
+                "lark"
+                if "larksuite.com" in str(config.get("baseUrl") or "").lower()
+                else "feishu"
+            )
+        if configured_platform not in self.platform_base_urls:
+            raise ConnectorError(
+                "CONFIG_INVALID",
+                "飞书平台必须选择中国大陆飞书或海外 Lark",
+                "configuration",
+            )
+        self.platform = configured_platform
+        self.base_url = self.platform_base_urls[self.platform]
 
     def _token(self) -> str:
-        require_fields(self.config, ("appId", "approvalCode"))
+        require_fields(self.config, ("appId",))
         if not self.app_secret:
             raise ConnectorError("SECRET_MISSING", "飞书 App Secret 尚未保存到系统密钥库", "configuration")
         status, body, _headers = self.transport.request(
@@ -237,55 +260,225 @@ class FeishuApprovalConnector:
 
     def probe(self) -> dict[str, Any]:
         started = time.monotonic()
-        token = self._token()
-        status, body, headers = self.transport.request(
-            "GET",
-            f"{self.base_url}/open-apis/approval/v4/approvals/{urllib.parse.quote(self.config['approvalCode'])}",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        if status != 200 or body.get("code", 0) != 0:
-            raise map_feishu_error(status, body)
+        self._token()
         return {
             "ok": True,
             "latencyMs": round((time.monotonic() - started) * 1000),
             "identity": {"appId": self.config["appId"]},
-            "scope": {"approvalCode": self.config["approvalCode"]},
+            "scope": {
+                "platform": self.platform,
+                "approvalCodeConfigured": bool(str(self.config.get("approvalCode") or "").strip()),
+            },
             "capabilities": list(self.capabilities),
+            "tenantTokenIssued": True,
+        }
+
+    @staticmethod
+    def _form_fields(value: Any) -> list[dict[str, Any]]:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                return []
+        fields: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        def walk(node: Any) -> None:
+            if isinstance(node, list):
+                for item in node:
+                    walk(item)
+                return
+            if not isinstance(node, dict):
+                return
+            field_id = str(
+                node.get("id")
+                or node.get("widget_id")
+                or node.get("field_id")
+                or node.get("key")
+                or ""
+            ).strip()
+            field_name = str(
+                node.get("name")
+                or node.get("widget_name")
+                or node.get("label")
+                or node.get("title")
+                or ""
+            ).strip()
+            if field_id and field_name and field_id not in seen:
+                required_value = node.get("required", node.get("is_required", False))
+                required = (
+                    required_value
+                    if isinstance(required_value, bool)
+                    else str(required_value).strip().lower() in {"1", "true", "yes"}
+                )
+                fields.append({
+                    "id": field_id,
+                    "name": field_name,
+                    "type": str(
+                        node.get("type")
+                        or node.get("widget_type")
+                        or node.get("field_type")
+                        or ""
+                    ),
+                    "required": required,
+                })
+                seen.add(field_id)
+            for child_key in (
+                "children",
+                "items",
+                "widgets",
+                "fields",
+                "form",
+                "form_content",
+                "value",
+            ):
+                child = node.get(child_key)
+                if isinstance(child, (dict, list)):
+                    walk(child)
+
+        walk(value)
+        return fields
+
+    def read_approval_fields(self) -> dict[str, Any]:
+        require_fields(self.config, ("approvalCode",))
+        token = self._token()
+        status, body, headers = self.transport.request(
+            "GET",
+            f"{self.base_url}/open-apis/approval/v4/approvals/"
+            f"{urllib.parse.quote(str(self.config['approvalCode']))}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if status != 200 or body.get("code", 0) != 0:
+            raise map_feishu_error(status, body)
+        data = body.get("data") or {}
+        form = (
+            data.get("form")
+            or data.get("form_content")
+            or data.get("approval_form")
+            or []
+        )
+        return {
+            "approvalCode": self.config["approvalCode"],
+            "approvalName": str(
+                data.get("approval_name")
+                or data.get("name")
+                or data.get("approvalName")
+                or ""
+            ),
+            "fields": self._form_fields(form),
             "requestId": headers.get("X-Request-Id") or headers.get("x-request-id"),
-            "serverTimeChecked": True,
         }
 
     def sync_approved_instances(self, cursor: dict[str, Any] | None = None) -> dict[str, Any]:
-        token = self._token()
+        require_fields(self.config, ("approvalCode",))
         now_seconds = int(time.time())
-        current_cursor = cursor or {}
+        query_date_from = str(self.config.get("queryDateFrom") or "").strip()
+        query_date_to = str(self.config.get("queryDateTo") or "").strip()
+
+        def completion_date(raw_timestamp: Any) -> str:
+            try:
+                timestamp = int(str(raw_timestamp or "").strip())
+            except ValueError:
+                return ""
+            if timestamp <= 0:
+                return ""
+            seconds = timestamp / 1000 if abs(timestamp) >= 10_000_000_000 else timestamp
+            return datetime.fromtimestamp(seconds, tz=timezone.utc).date().isoformat()
+
+        def completion_in_query_range(raw_timestamp: Any) -> bool:
+            completed_on = completion_date(raw_timestamp)
+            if not completed_on:
+                return True
+            return (
+                (not query_date_from or completed_on >= query_date_from)
+                and (not query_date_to or completed_on <= query_date_to)
+            )
+
+        supplied_cursor = cursor or {}
+        current_cursor = (
+            supplied_cursor
+            if supplied_cursor.get("version") == self.sync_cursor_version
+            else {}
+        )
         page_token = str(current_cursor.get("pageToken") or "")
+        range_end = now_seconds
         if page_token:
             start_time = int(current_cursor.get("startTime") or current_cursor.get("endTime"))
             end_time = int(current_cursor.get("endTime"))
         else:
-            start_time = int(current_cursor.get("endTime") or now_seconds - 7 * 24 * 3600)
-            end_time = now_seconds
+            initial_start_time = now_seconds - self.initial_backfill_days * 24 * 3600
+            if query_date_from:
+                try:
+                    completion_range_start = datetime.fromisoformat(
+                        f"{query_date_from}T00:00:00+00:00"
+                    ).astimezone(timezone.utc)
+                    initial_start_time = int(
+                        (
+                            completion_range_start
+                            - timedelta(days=self.initial_backfill_days)
+                        ).timestamp()
+                    )
+                except ValueError:
+                    pass
+            start_time = int(current_cursor.get("endTime") or initial_start_time)
+            end_time = min(now_seconds, start_time + 29 * 24 * 3600)
+        token = self._token()
         payload: dict[str, Any] = {
             "approval_code": self.config["approvalCode"],
-            "start_time": str(start_time),
-            "end_time": str(end_time),
-            "page_size": 100,
+            "instance_status": "APPROVED",
+            "instance_start_time_from": str(start_time * 1000),
+            "instance_start_time_to": str(end_time * 1000),
         }
+        query = {"page_size": 200}
         if page_token:
-            payload["page_token"] = page_token
+            query["page_token"] = page_token
         status, body, _headers = self.transport.request(
             "POST",
-            f"{self.base_url}/open-apis/approval/v4/instances",
+            f"{self.base_url}/open-apis/approval/v4/instances/query?"
+            f"{urllib.parse.urlencode(query)}",
             headers={"Authorization": f"Bearer {token}"},
             payload=payload,
         )
         if status != 200 or body.get("code", 0) != 0:
             raise map_feishu_error(status, body)
         data = body.get("data") or {}
-        instance_codes = data.get("instance_code_list") or data.get("instance_codes") or []
-        approved: list[dict[str, Any]] = []
-        for instance_code in instance_codes:
+        raw_instances = (
+            data.get("instance_code_list")
+            or data.get("instance_codes")
+            or data.get("instance_list")
+            or []
+        )
+        known_instance_codes = {
+            str(instance_code or "").strip()
+            for instance_code in self.config.get("_knownInstanceCodes", [])
+            if str(instance_code or "").strip()
+        }
+        instance_codes: list[str] = []
+        for item in raw_instances:
+            if isinstance(item, dict):
+                nested_instance = item.get("instance") or {}
+                if not completion_in_query_range(
+                    nested_instance.get("end_time")
+                    or nested_instance.get("endTime")
+                    or item.get("end_time")
+                    or item.get("endTime")
+                ):
+                    continue
+                instance_code = (
+                    nested_instance.get("code")
+                    or nested_instance.get("instance_code")
+                    or item.get("instance_code")
+                    or item.get("code")
+                    or ""
+                )
+            else:
+                instance_code = item
+            normalized_code = str(instance_code or "").strip()
+            if normalized_code in known_instance_codes:
+                continue
+            if normalized_code and normalized_code not in instance_codes:
+                instance_codes.append(normalized_code)
+        def fetch_approved_instance(instance_code: str) -> dict[str, Any] | None:
             detail_status, detail, _detail_headers = self.transport.request(
                 "GET",
                 f"{self.base_url}/open-apis/approval/v4/instances/{urllib.parse.quote(str(instance_code))}",
@@ -294,14 +487,32 @@ class FeishuApprovalConnector:
             if detail_status != 200 or detail.get("code", 0) != 0:
                 raise map_feishu_error(detail_status, detail)
             instance = (detail.get("data") or {}).get("instance") or detail.get("data") or {}
-            if str(instance.get("status", "")).upper() == "APPROVED":
-                approved.append(instance)
-        has_more = bool(data.get("has_more"))
+            if str(instance.get("status", "")).upper() != "APPROVED":
+                return None
+            if not completion_in_query_range(
+                instance.get("end_time") or instance.get("endTime")
+            ):
+                return None
+            return instance
+
+        if isinstance(self.transport, JsonHttpTransport) and len(instance_codes) > 1:
+            with ThreadPoolExecutor(max_workers=min(10, len(instance_codes))) as executor:
+                fetched_instances = executor.map(fetch_approved_instance, instance_codes)
+                approved = [instance for instance in fetched_instances if instance is not None]
+        else:
+            approved = [
+                instance
+                for instance_code in instance_codes
+                if (instance := fetch_approved_instance(instance_code)) is not None
+            ]
+        remote_has_more = bool(data.get("has_more"))
+        has_more = remote_has_more or end_time < range_end
         next_cursor = {
+            "version": self.sync_cursor_version,
+            "pageToken": data.get("page_token") if remote_has_more else "",
             "endTime": end_time,
-            "pageToken": data.get("page_token") if has_more else "",
         }
-        if has_more:
+        if remote_has_more:
             next_cursor["startTime"] = start_time
         return {
             "items": approved,
@@ -327,6 +538,7 @@ KINGDEE_ERROR_MAP = {
 
 class KingdeeK3CloudConnector:
     connector_type = "kingdee-k3cloud-webapi-v6"
+    auth_mode = "app-id-secret-v3"
     default_capabilities = (
         "save_voucher_draft",
         "query_voucher",
@@ -336,48 +548,117 @@ class KingdeeK3CloudConnector:
     def __init__(
         self,
         config: dict[str, Any],
-        password: str,
-        transport: Transport | None = None,
+        app_secret: str,
+        sdk_factory: Any | None = None,
     ) -> None:
         self.config = config
-        self.password = password
-        self.transport = transport or JsonHttpTransport()
-        self.base_url = normalize_base_url(
-            str(config.get("baseUrl") or ""),
+        self.app_secret = app_secret
+        self.sdk_factory = sdk_factory
+        self.server_url = normalize_base_url(
+            str(config.get("serverUrl") or config.get("baseUrl") or ""),
             production=config.get("environment") == "生产环境",
         )
+        self.acct_id = str(config.get("acctId") or config.get("accountId") or "").strip()
+        self._sdk_client: Any | None = None
 
-    def _endpoint(self, service: str) -> str:
-        return f"{self.base_url}/K3Cloud/Kingdee.BOS.WebApi.ServicesStub.{service}.common.kdsvc"
-
-    def login(self) -> dict[str, Any]:
-        require_fields(self.config, ("accountId", "username"))
-        if not self.password:
-            raise ConnectorError("SECRET_MISSING", "金蝶密码尚未保存到系统密钥库", "configuration")
-        status, body, _headers = self.transport.request(
-            "POST",
-            self._endpoint("AuthService.ValidateUser"),
-            payload=[
-                self.config["accountId"],
-                self.config["username"],
-                self.password,
-                int(self.config.get("localeId") or 2052),
-            ],
-        )
-        if status != 200:
-            raise map_kingdee_error(status, body)
-        login_result = body.get("LoginResultType")
-        if login_result not in (None, 1) and not body.get("IsSuccessByAPI"):
+    def _sdk(self) -> Any:
+        if self._sdk_client is not None:
+            return self._sdk_client
+        require_fields(self.config, ("username", "appId"))
+        if not self.acct_id:
+            raise ConnectorError("CONFIG_MISSING", "连接器缺少配置：acctId", "configuration")
+        if not self.app_secret:
             raise ConnectorError(
-                "AUTHENTICATION_FAILED",
-                str(body.get("Message") or "金蝶登录失败"),
-                "authentication",
+                "SECRET_MISSING",
+                "金蝶 AppSecret 尚未保存到系统密钥库",
+                "configuration",
             )
+        try:
+            if self.sdk_factory is None:
+                from k3cloud_webapi_sdk.main import K3CloudApiSdk
+
+                sdk = K3CloudApiSdk(server_url=self.server_url)
+            elif callable(self.sdk_factory):
+                sdk = self.sdk_factory(self.server_url)
+            else:
+                sdk = self.sdk_factory
+            sdk.InitConfig(
+                self.acct_id,
+                str(self.config["username"]),
+                str(self.config["appId"]),
+                self.app_secret,
+                self.server_url,
+                int(self.config.get("localeId") or 2052),
+                int(self.config.get("orgNum") or 80016),
+                int(self.config.get("connectTimeout") or 120),
+                int(self.config.get("requestTimeout") or 120),
+            )
+        except ConnectorError:
+            raise
+        except ImportError as exc:
+            raise ConnectorError(
+                "SDK_MISSING",
+                "当前安装缺少金蝶官方 Python SDK",
+                "configuration",
+                detail=str(exc),
+            ) from exc
+        except Exception as exc:
+            raise _map_kingdee_sdk_exception(exc, "初始化") from exc
+        self._sdk_client = sdk
+        return sdk
+
+    def _call_json(self, operation: str, *args: Any) -> Any:
+        try:
+            raw = getattr(self._sdk(), operation)(*args)
+        except ConnectorError:
+            raise
+        except Exception as exc:
+            raise _map_kingdee_sdk_exception(exc, operation) from exc
+        if isinstance(raw, (dict, list)):
+            body = raw
+        else:
+            try:
+                body = json.loads(str(raw))
+            except (TypeError, ValueError) as exc:
+                raise ConnectorError(
+                    "INVALID_RESPONSE",
+                    "金蝶返回了无法解析的响应",
+                    "remote_error",
+                    detail=f"{operation}: {str(raw)[:300]}",
+                ) from exc
+        def error_payload(value: Any) -> dict[str, Any] | None:
+            if isinstance(value, dict):
+                response_status = value.get("ResponseStatus")
+                if isinstance(response_status, dict) and response_status.get("IsSuccess") is False:
+                    return value
+                result = value.get("Result")
+                if isinstance(result, dict):
+                    response_status = result.get("ResponseStatus")
+                    if isinstance(response_status, dict) and response_status.get("IsSuccess") is False:
+                        return value
+                for nested in value.values():
+                    found = error_payload(nested)
+                    if found:
+                        return found
+            elif isinstance(value, list):
+                for nested in value:
+                    found = error_payload(nested)
+                    if found:
+                        return found
+            return None
+
+        nested_error = error_payload(body)
+        if nested_error:
+            raise map_kingdee_error(200, nested_error)
         return body
 
     def probe(self) -> dict[str, Any]:
         started = time.monotonic()
-        login = self.login()
+        books = self.query_master_data(
+            "BD_AccountBook",
+            ["FBOOKID", "FNumber", "FName"],
+            limit=1,
+        )
         capabilities = list(self.default_capabilities)
         period_query = self.config.get("periodQuery") or {}
         if period_query.get("formId"):
@@ -404,14 +685,18 @@ class KingdeeK3CloudConnector:
         return {
             "ok": True,
             "latencyMs": round((time.monotonic() - started) * 1000),
-            "identity": {"username": self.config["username"]},
+            "identity": {
+                "username": self.config["username"],
+                "appId": self.config["appId"],
+            },
             "scope": {
-                "accountId": self.config["accountId"],
+                "acctId": self.acct_id,
                 "ledger": self.config.get("ledger"),
+                "orgNum": self.config.get("orgNum") or "80016",
             },
             "capabilities": capabilities,
-            "serverTimeChecked": True,
-            "loginContext": login.get("Context") or {},
+            "remoteQueryChecked": True,
+            "sampleAccountBookCount": len(books),
         }
 
     def query_master_data(
@@ -419,26 +704,40 @@ class KingdeeK3CloudConnector:
         form_id: str,
         field_keys: list[str],
         filter_string: str = "",
-        limit: int = 2000,
+        limit: int = 100_000,
     ) -> list[Any]:
-        self.login()
-        payload = {
-            "FormId": form_id,
-            "FieldKeys": ",".join(field_keys),
-            "FilterString": filter_string,
-            "OrderString": "",
-            "TopRowCount": min(max(limit, 1), 10_000),
-            "StartRow": 0,
-            "Limit": min(max(limit, 1), 10_000),
-        }
-        status, body, _headers = self.transport.request(
-            "POST",
-            self._endpoint("DynamicFormService.ExecuteBillQuery"),
-            payload=[json.dumps(payload, ensure_ascii=False)],
-        )
-        if status != 200 or isinstance(body, dict) and body.get("ResponseStatus", {}).get("IsSuccess") is False:
-            raise map_kingdee_error(status, body)
-        return body if isinstance(body, list) else body.get("Result", [])
+        if not form_id.strip():
+            raise ConnectorError("INVALID_ARGUMENT", "金蝶 FormId 不能为空", "validation")
+        if not field_keys:
+            raise ConnectorError("INVALID_ARGUMENT", "金蝶查询字段不能为空", "validation")
+        max_rows = min(max(int(limit), 1), 100_000)
+        page_size = min(max_rows, 2_000)
+        rows: list[Any] = []
+        while len(rows) < max_rows:
+            payload = {
+                "FormId": form_id,
+                "FieldKeys": ",".join(field_keys),
+                "FilterString": filter_string,
+                "OrderString": "",
+                "TopRowCount": 0,
+                "StartRow": len(rows),
+                "Limit": min(page_size, max_rows - len(rows)),
+            }
+            body = self._call_json(
+                "ExecuteBillQuery",
+                json.dumps(payload, ensure_ascii=False),
+            )
+            page = body if isinstance(body, list) else body.get("Result", [])
+            if not isinstance(page, list):
+                raise ConnectorError(
+                    "INVALID_RESPONSE",
+                    "金蝶基础资料查询结果不是数组",
+                    "remote_error",
+                )
+            rows.extend(page)
+            if len(page) < payload["Limit"]:
+                break
+        return rows
 
     def sync_master_data(self, queries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [
@@ -524,9 +823,18 @@ class KingdeeK3CloudConnector:
         }
 
     def save_voucher_draft(self, voucher: dict[str, Any], idempotency_key: str) -> dict[str, Any]:
-        self.login()
         form_id = str(self.config.get("voucherFormId") or "GL_VOUCHER")
         dimension_field_map = self.config.get("dimensionFieldMap") or {}
+        accounting_date = str(voucher.get("accountingDate") or "")
+        try:
+            year, month, _day = (int(part) for part in accounting_date.split("-", 2))
+        except (TypeError, ValueError) as exc:
+            raise ConnectorError(
+                "INVALID_ACCOUNTING_DATE",
+                "凭证日期必须使用 YYYY-MM-DD",
+                "validation",
+            ) from exc
+        marker = f"CVN:{idempotency_key}"
 
         def mapped_dimensions(line: dict[str, Any]) -> dict[str, Any]:
             dimensions = line.get("dimensions") or {}
@@ -548,63 +856,100 @@ class KingdeeK3CloudConnector:
 
         model = {
             "FAccountBookID": {"FNumber": self.config.get("ledger")},
-            "FDate": voucher.get("accountingDate"),
-            "FVOUCHERGROUPID": {"FNumber": voucher.get("voucherType") or "记"},
-            "FReference": idempotency_key,
+            "FDate": f"{accounting_date} 00:00:00",
+            "FBUSDATE": f"{accounting_date} 00:00:00",
+            "FYEAR": year,
+            "FPERIOD": month,
+            "FVOUCHERGROUPID": {
+                "FNumber": self.config.get("voucherGroup") or "PZZ47"
+            },
+            "FSourceBillKey": {"FNumber": idempotency_key},
+            "FDocumentStatus": "Z",
+            "_antiDuplicate": idempotency_key,
             "FEntity": [
                 {
-                    "FEXPLANATION": line.get("summary"),
+                    "FEXPLANATION": _kingdee_explanation(
+                        str(line.get("summary") or voucher.get("summary") or ""),
+                        marker,
+                    ),
                     "FACCOUNTID": {"FNumber": line.get("accountCode")},
-                    "FDEBIT": (line.get("debitCents") or 0) / 100,
-                    "FCREDIT": (line.get("creditCents") or 0) / 100,
+                    "FCURRENCYID": {
+                        "FNumber": line.get("currency")
+                        or self.config.get("currencyCode")
+                        or "PRE001"
+                    },
+                    "FEXCHANGERATETYPE": {
+                        "FNumber": line.get("exchangeRateType")
+                        or self.config.get("exchangeRateType")
+                        or "001"
+                    },
+                    "FEXCHANGERATE": str(line.get("exchangeRate") or 1),
+                    "FAMOUNTFOR": _kingdee_amount(
+                        (
+                            line.get("originalAmountCents")
+                            if line.get("originalAmountCents") is not None
+                            else line.get("debitCents") or line.get("creditCents") or 0
+                        )
+                    ),
+                    "FDEBIT": _kingdee_amount(line.get("debitCents") or 0),
+                    "FCREDIT": _kingdee_amount(line.get("creditCents") or 0),
                     **mapped_dimensions(line),
                 }
                 for line in voucher.get("lines", [])
             ],
         }
         save_payload = {
-            "Creator": "",
             "NeedUpDateFields": [],
-            "NeedReturnFields": ["FID", "FBillNo"],
-            "IsDeleteEntry": False,
-            "IsVerifyBaseDataField": True,
-            "IsEntryBatchFill": True,
+            "NeedReturnFields": [],
+            "IsDeleteEntry": "true",
+            "SubSystemId": "",
+            "IsVerifyBaseDataField": "false",
+            "IsEntryBatchFill": "true",
+            "ValidateFlag": "true",
+            "NumberSearch": "true",
+            "IsAutoAdjustField": "true",
+            "ValidateRepeatJson": "true",
             "IsAutoSubmitAndAudit": False,
             "Model": model,
         }
-        status, body, _headers = self.transport.request(
-            "POST",
-            self._endpoint("DynamicFormService.Save"),
-            payload=[form_id, json.dumps(save_payload, ensure_ascii=False)],
-        )
+        body = self._call_json("Save", form_id, save_payload)
         response_status = body.get("Result", {}).get("ResponseStatus") or body.get("ResponseStatus") or {}
-        if status != 200 or response_status.get("IsSuccess") is not True:
-            raise map_kingdee_error(status, body)
+        result = body.get("Result") or {}
         entity = (response_status.get("SuccessEntitys") or [{}])[0]
+        external_id = entity.get("Id") or result.get("Id")
+        external_number = entity.get("Number") or result.get("Number")
+        if not external_id or not external_number:
+            raise ConnectorError(
+                "EXTERNAL_REFERENCE_MISSING",
+                "金蝶保存成功但没有返回凭证 ID 和编号",
+                "validation",
+            )
         return {
-            "externalId": str(entity.get("Id") or ""),
-            "externalNumber": str(entity.get("Number") or ""),
+            "externalId": str(external_id),
+            "externalNumber": str(external_number),
             "status": "saved",
             "rawStatus": response_status,
         }
 
     def query_voucher(self, *, number: str = "", external_id: str = "") -> dict[str, Any] | None:
-        self.login()
         form_id = str(self.config.get("voucherFormId") or "GL_VOUCHER")
-        selector = {"Number": number} if number else {"Id": external_id}
-        status, body, _headers = self.transport.request(
-            "POST",
-            self._endpoint("DynamicFormService.View"),
-            payload=[form_id, json.dumps(selector, ensure_ascii=False)],
+        selector = {
+            "CreateOrgId": 0,
+            "Number": number,
+            "Id": "" if number else external_id,
+            "IsSortBySeq": "false" if number else "true",
+        }
+        body = self._call_json(
+            "View",
+            form_id,
+            json.dumps(selector, ensure_ascii=False),
         )
         result = body.get("Result") if isinstance(body, dict) else None
-        if status != 200:
-            raise map_kingdee_error(status, body)
         if not result:
             return None
         response_status = result.get("ResponseStatus") or {}
         if response_status and response_status.get("IsSuccess") is False:
-            error = map_kingdee_error(status, body)
+            error = map_kingdee_error(200, body)
             if error.code == "NOT_FOUND":
                 return None
             raise error
@@ -617,34 +962,40 @@ class KingdeeK3CloudConnector:
         }
 
     def query_voucher_by_reference(self, idempotency_key: str) -> dict[str, Any] | None:
-        self.login()
         form_id = str(self.config.get("voucherFormId") or "GL_VOUCHER")
-        field_keys = ["FID", "FBillNo", "FDocumentStatus", "FReference"]
-        escaped = idempotency_key.replace("'", "''")
+        field_keys = ["FVOUCHERID", "FBillNo", "FDocumentStatus"]
+        escaped = f"CVN:{idempotency_key}".replace("'", "''")
         payload = {
             "FormId": form_id,
             "FieldKeys": ",".join(field_keys),
-            "FilterString": f"FReference='{escaped}'",
-            "OrderString": "",
-            "TopRowCount": 1,
+            "FilterString": f"FEXPLANATION LIKE '%{escaped}%'",
+            "OrderString": "FBillNo ASC",
+            "TopRowCount": 20,
             "StartRow": 0,
-            "Limit": 1,
+            "Limit": 20,
         }
-        status, body, _headers = self.transport.request(
-            "POST",
-            self._endpoint("DynamicFormService.ExecuteBillQuery"),
-            payload=[json.dumps(payload, ensure_ascii=False)],
+        body = self._call_json(
+            "ExecuteBillQuery",
+            json.dumps(payload, ensure_ascii=False),
         )
-        if status != 200:
-            raise map_kingdee_error(status, body)
         rows = body if isinstance(body, list) else body.get("Result", [])
         if not rows:
             return None
-        row = rows[0]
-        if isinstance(row, list):
-            row = dict(zip(field_keys, row))
+        unique: dict[str, dict[str, Any]] = {}
+        for raw_row in rows:
+            row = dict(zip(field_keys, raw_row)) if isinstance(raw_row, list) else raw_row
+            voucher_id = str(row.get("FVOUCHERID") or "")
+            if voucher_id:
+                unique[voucher_id] = row
+        if len(unique) != 1:
+            raise ConnectorError(
+                "IDEMPOTENCY_REFERENCE_AMBIGUOUS",
+                "按幂等标记回查到多张金蝶凭证，需要人工核对",
+                "conflict",
+            )
+        row = next(iter(unique.values()))
         return {
-            "externalId": str(row.get("FID") or ""),
+            "externalId": str(row.get("FVOUCHERID") or ""),
             "externalNumber": str(row.get("FBillNo") or ""),
             "status": str(row.get("FDocumentStatus") or "saved"),
             "raw": row,
@@ -652,6 +1003,56 @@ class KingdeeK3CloudConnector:
 
     def query_by_idempotency_reference(self, idempotency_key: str) -> dict[str, Any] | None:
         return self.query_voucher_by_reference(idempotency_key)
+
+
+def _map_kingdee_sdk_exception(exc: Exception, operation: str) -> ConnectorError:
+    detail = str(exc)[:1000]
+    try:
+        body = json.loads(detail)
+    except (TypeError, ValueError):
+        body = None
+    if isinstance(body, dict):
+        return map_kingdee_error(500, body)
+    lowered = detail.lower()
+    if any(marker in lowered for marker in ("timeout", "timed out", "connection", "network")):
+        return ConnectorError(
+            "NETWORK_ERROR",
+            "无法连接金蝶，请检查服务器地址、网络和证书",
+            "network",
+            True,
+            detail,
+        )
+    if any(marker in detail for marker in ("授权", "签名", "身份", "应用密钥")):
+        return ConnectorError(
+            "AUTHENTICATION_FAILED",
+            "金蝶 AppID/AppSecret 认证失败",
+            "authentication",
+            False,
+            detail,
+        )
+    return ConnectorError(
+        "KINGDEE_SDK_ERROR",
+        f"金蝶 {operation} 调用失败",
+        "remote_error",
+        False,
+        detail,
+    )
+
+
+def _kingdee_amount(cents: Any) -> str:
+    try:
+        return f"{int(cents) / 100:.2f}"
+    except (TypeError, ValueError) as exc:
+        raise ConnectorError("INVALID_AMOUNT", "凭证金额必须是整数分", "validation") from exc
+
+
+def _kingdee_explanation(summary: str, marker: str, max_length: int = 200) -> str:
+    suffix = f" | {marker}"
+    if marker in summary:
+        return summary[:max_length]
+    if not summary:
+        return marker[-max_length:]
+    return f"{summary[:max(0, max_length - len(suffix))]}{suffix}"
 
 
 def _path_value(payload: Any, path: str, default: Any = None) -> Any:

@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -119,6 +120,33 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(checks["component-ocr"]["status"], "passed")
             self.assertEqual(checks["component-pdf"]["status"], "passed")
 
+    def test_macos_arm64_local_development_does_not_block_production(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.make_service(directory)
+            browser_checks = [
+                {"id": check_id, "status": "passed"}
+                for check_id in (
+                    "browser-fetch",
+                    "browser-file",
+                    "browser-blob",
+                    "browser-crypto",
+                    "browser-dom",
+                )
+            ]
+            with (
+                patch("auto_voucher.runtime.platform.system", return_value="Darwin"),
+                patch("auto_voucher.runtime.platform.release", return_value="25.5.0"),
+                patch("auto_voucher.runtime.platform.machine", return_value="arm64"),
+            ):
+                result = service.check(include_network=False, browser_checks=browser_checks)
+                service.assert_production_ready()
+
+            checks = {item["id"]: item for item in result["checks"]}
+            self.assertEqual(checks["operating-system"]["status"], "passed")
+            self.assertFalse(checks["operating-system"]["productionBlocking"])
+            self.assertEqual(checks["architecture"]["status"], "passed")
+            self.assertFalse(checks["architecture"]["productionBlocking"])
+
     def test_credential_manager_failure_degrades_but_blocks_production(self):
         with tempfile.TemporaryDirectory() as directory:
             service = self.make_service(directory, secrets=False)
@@ -138,7 +166,8 @@ class RuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             service = self.make_service(directory)
             service.secret_store = CleanupFailingSecretStore(available=False)
-            result = service._keyring_check()
+            with patch("auto_voucher.runtime.platform.system", return_value="Windows"):
+                result = service._keyring_check()
             self.assertEqual(result["status"], "warning")
             self.assertFalse(result["blocking"])
             self.assertTrue(result["productionBlocking"])
@@ -147,11 +176,23 @@ class RuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             service = self.make_service(directory)
             service.secret_store = SetFailingSecretStore(available=True)
-            result = service._keyring_check()
+            with patch("auto_voucher.runtime.platform.system", return_value="Windows"):
+                result = service._keyring_check()
             self.assertEqual(result["status"], "warning")
             self.assertEqual(result["actual"], "Windows 登录会话不存在")
             self.assertFalse(result["blocking"])
             self.assertTrue(result["productionBlocking"])
+
+    def test_macos_development_keyring_warning_does_not_block_file_workflows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.make_service(directory, secrets=False)
+            with patch("auto_voucher.runtime.platform.system", return_value="Darwin"):
+                result = service._keyring_check()
+            self.assertEqual(result["status"], "warning")
+            self.assertEqual(result["name"], "系统密钥库")
+            self.assertFalse(result["blocking"])
+            self.assertFalse(result["productionBlocking"])
+            self.assertIn("API 连接器无法配置", result["action"])
 
     def test_repair_whitelist_does_not_modify_database(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -196,6 +237,12 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(status["status"], "launcher_unavailable")
             with self.assertRaisesRegex(ValueError, "未连接轻量启动器"):
                 client.command("check")
+
+    def test_development_without_update_manifest_has_no_user_warning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.make_service(directory)
+            with patch.dict(os.environ, {"AUTO_VOUCHER_UPDATE_MANIFEST_URL": ""}):
+                self.assertEqual(service._network_checks(include_network=True), [])
 
     def test_launcher_client_rejects_removed_component_cleanup_command(self):
         with tempfile.TemporaryDirectory() as directory:

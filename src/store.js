@@ -18,6 +18,9 @@ function normalizeState(state) {
   state.syncLog ||= [];
   state.externalQueryCache ||= [];
   state.externalReadCache ||= [];
+  state.approvalProcessingRules ||= [];
+  state.approvalUnionSelections ||= {};
+  state.approvalProcessingConfirmations ||= {};
   return state;
 }
 
@@ -208,6 +211,13 @@ export function configureConnector(connectorId, config, productionConfirmation =
   });
 }
 
+export function configureConnectorApprovalQuery(connectorId, config) {
+  return apiRequest(`/api/connectors/${encodeURIComponent(connectorId)}/approval-config`, {
+    method: "PUT",
+    body: JSON.stringify({ config }),
+  });
+}
+
 export function saveConnectorSecret(connectorId, name, value) {
   return apiRequest(`/api/connectors/${encodeURIComponent(connectorId)}/secret`, {
     method: "POST",
@@ -219,6 +229,13 @@ export function testConnector(connectorId) {
   return apiRequest(`/api/connectors/${encodeURIComponent(connectorId)}/test`, {
     method: "POST",
     body: JSON.stringify({}),
+  });
+}
+
+export function readConnectorApprovalFields(connectorId, profileId = "") {
+  return apiRequest(`/api/connectors/${encodeURIComponent(connectorId)}/approval-fields`, {
+    method: "POST",
+    body: JSON.stringify({ profileId }),
   });
 }
 

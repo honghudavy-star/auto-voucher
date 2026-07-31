@@ -8,6 +8,7 @@ version = "0.2.7"
 description = "Local-first accounting voucher automation workbench"
 requires-python = ">=3.11"
 dependencies = [
+  "kingdee.cdp.webapi.sdk==8.2.0",
   "openpyxl==3.1.5",
   "xlrd==2.0.2",
   "keyring==25.7.0",

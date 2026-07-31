@@ -19,10 +19,14 @@ from .database import Database, utc_now
 from .defaults import account_group, account_normal_balance
 from .security import redact_text
 from .importers import (
+    BANK_CREDIT_FIELDS,
+    BANK_DEBIT_FIELDS,
     apply_mapping,
     event_from_row,
     header_fingerprint,
     headers_for,
+    import_profile,
+    normalize_import_rows,
     parse_rows,
     suggest_mapping,
 )
@@ -39,10 +43,13 @@ class VoucherService:
         suffix = Path(filename).suffix.lower()
         if suffix not in {".csv", ".txt", ".xls", ".xlsx"}:
             raise ValueError("只有 CSV、TXT、XLS 和 XLSX 支持字段映射预览")
-        rows = parse_rows(filename, content)
+        source_rows = parse_rows(filename, content)
+        rows = normalize_import_rows(source_rows)
         if not rows:
             raise ValueError("文件没有可预览的数据行")
+        source_headers = headers_for(source_rows)
         headers = headers_for(rows)
+        derived_headers = [header for header in headers if header not in source_headers]
         fingerprint = header_fingerprint(headers)
         master_records = parse_master_data_rows(rows)
         state = self.database.get_state() or {}
@@ -50,13 +57,25 @@ class VoucherService:
             (item for item in state.get("mappingTemplates", []) if item.get("fingerprint") == fingerprint),
             None,
         )
+        profile = import_profile(rows)
         mapping = dict(template.get("mapping", {})) if template else suggest_mapping(headers)
+        if not template and profile == "bankStatement":
+            directional_amount_headers = [
+                header
+                for header in source_headers
+                if header in (*BANK_DEBIT_FIELDS, *BANK_CREDIT_FIELDS)
+            ]
+            if directional_amount_headers:
+                mapping["amount"] = directional_amount_headers
         return {
             "filename": Path(filename).name,
             "headers": headers,
+            "sourceHeaders": source_headers,
+            "derivedHeaders": derived_headers,
             "sampleRows": rows[:5],
             "fingerprint": fingerprint,
             "kind": "masterData" if master_records else "businessData",
+            "importProfile": profile,
             "masterDataCount": len(master_records),
             "suggestedMapping": mapping,
             "matchedTemplate": template,
@@ -65,7 +84,7 @@ class VoucherService:
     def import_files(
         self,
         files: list[tuple[str, bytes, str]],
-        mapping: dict[str, str] | None = None,
+        mapping: dict[str, Any] | None = None,
         template_name: str = "",
         progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
@@ -129,7 +148,7 @@ class VoucherService:
         filename: str,
         content: bytes,
         media_type: str,
-        mapping: dict[str, str] | None,
+        mapping: dict[str, Any] | None,
     ) -> tuple[int, int, int, int, str | None] | tuple[None, int, int, int, None]:
         safe_name = Path(filename).name
         suffix = Path(safe_name).suffix.lower()
@@ -140,9 +159,13 @@ class VoucherService:
         digest = hashlib.sha256(content).hexdigest()
         if self.database.has_source(digest):
             return None, 0, 0, 0, None
-        rows = parse_rows(safe_name, content)
+        source_rows = parse_rows(safe_name, content)
+        rows = normalize_import_rows(source_rows)
         fingerprint = header_fingerprint(headers_for(rows)) if rows else None
-        mapped_rows = [apply_mapping(row, mapping) for row in rows]
+        mapped_rows = normalize_import_rows([
+            apply_mapping(row, mapping)
+            for row in source_rows
+        ])
         master_records = parse_master_data_rows(mapped_rows)
         unique = uuid.uuid4().hex[:8]
         document_id = f"DOC-{unique.upper()}"
@@ -367,7 +390,7 @@ class VoucherService:
             (item for item in state["events"] if item.get("businessKey") == candidate["businessKey"]),
             None,
         )
-        if existing is None:
+        if existing is None and not candidate.get("bankSerial"):
             existing = next(
                 (
                     item for item in state["events"]
@@ -505,7 +528,7 @@ class VoucherService:
         state: dict[str, Any],
         name: str,
         fingerprint: str,
-        mapping: dict[str, str],
+        mapping: dict[str, Any],
     ) -> None:
         templates = state.setdefault("mappingTemplates", [])
         existing = next((item for item in templates if item.get("fingerprint") == fingerprint), None)

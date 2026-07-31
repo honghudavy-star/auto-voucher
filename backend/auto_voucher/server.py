@@ -234,7 +234,7 @@ def make_handler(
                 shutil.rmtree(child) if child.is_dir() else child.unlink()
             for connector_id, names in {
                 "feishu-approval": ("app_secret",),
-                "kingdee-k3cloud": ("password",),
+                "kingdee-k3cloud": ("app_secret",),
                 "yonyou-u8": ("access_token",),
                 "inspur-gscloud": ("access_token",),
             }.items():
@@ -373,6 +373,17 @@ def make_handler(
                         int(payload.get("retentionDays") or 30),
                         int(payload.get("maxEntries") or 50_000),
                     )})
+                elif path.startswith("/api/connectors/") and path.endswith("/approval-config"):
+                    connector_id = (
+                        path.removeprefix("/api/connectors/")
+                        .removesuffix("/approval-config")
+                        .strip("/")
+                    )
+                    payload = self.read_json()
+                    self.json_response(connector_service.configure_approval_query(
+                        connector_id,
+                        payload.get("config") or {},
+                    ))
                 elif path.startswith("/api/connectors/") and path.endswith("/config"):
                     connector_id = path.removeprefix("/api/connectors/").removesuffix("/config").strip("/")
                     payload = self.read_json()
@@ -511,7 +522,11 @@ def make_handler(
                         shutil.rmtree(child) if child.is_dir() else child.unlink()
                     cleared_secrets = []
                     for connector in current.get("connectors", []):
-                        names = ("app_secret",) if connector.get("adapter") == "feishu-approval-v4" else ("password", "access_token")
+                        adapter = connector.get("adapter")
+                        if adapter in {"feishu-approval-v4", "kingdee-k3cloud-webapi-v6"}:
+                            names = ("app_secret",)
+                        else:
+                            names = ("access_token",)
                         for name in names:
                             try:
                                 secret_store.delete(str(connector.get("id") or ""), name)
@@ -573,6 +588,17 @@ def make_handler(
                     connector_id = path.removeprefix("/api/connectors/").removesuffix("/test").strip("/")
                     self.read_json()
                     self.json_response(connector_service.probe(connector_id))
+                elif path.startswith("/api/connectors/") and path.endswith("/approval-fields"):
+                    connector_id = (
+                        path.removeprefix("/api/connectors/")
+                        .removesuffix("/approval-fields")
+                        .strip("/")
+                    )
+                    payload = self.read_json()
+                    self.json_response(connector_service.read_approval_fields(
+                        connector_id,
+                        str(payload.get("profileId") or ""),
+                    ))
                 elif path.startswith("/api/connectors/") and path.endswith("/sync-approvals"):
                     connector_id = path.removeprefix("/api/connectors/").removesuffix("/sync-approvals").strip("/")
                     self.read_json()
@@ -622,9 +648,29 @@ def make_handler(
                 elif path.startswith("/api/connectors/") and path.endswith("/secret"):
                     connector_id = path.removeprefix("/api/connectors/").removesuffix("/secret").strip("/")
                     payload = self.read_json()
+                    state = database.get_state() or {}
+                    connector = next(
+                        (
+                            item
+                            for item in state.get("connectors", [])
+                            if item.get("id") == connector_id
+                        ),
+                        None,
+                    )
+                    if not connector:
+                        raise ValueError("连接器不存在")
+                    adapter = connector.get("adapter")
+                    allowed_names = (
+                        {"app_secret"}
+                        if adapter in {"feishu-approval-v4", "kingdee-k3cloud-webapi-v6"}
+                        else {"access_token"}
+                    )
+                    secret_name = str(payload.get("name", "")).strip()
+                    if secret_name not in allowed_names:
+                        raise ValueError("该连接器不允许保存此密钥类型")
                     secret_store.set(
                         connector_id,
-                        str(payload.get("name", "")).strip(),
+                        secret_name,
                         str(payload.get("value", "")),
                     )
                     self.json_response({"ok": True, "storedIn": "os-keyring"})
@@ -826,7 +872,7 @@ def make_handler(
             state = database.get_state() or {}
             if not (state.get("productionActivation") or {}).get("enabled"):
                 return self.json_response(
-                    {"error": "尚未通过测试上线，禁止生产导出凭证"},
+                    {"error": "尚未完成生产启用验证，禁止生产导出凭证"},
                     HTTPStatus.CONFLICT,
                 )
             voucher = next((item for item in state.get("vouchers", []) if item.get("id") == voucher_id), None)

@@ -118,27 +118,37 @@ class EnvironmentService:
         checks: list[dict[str, Any]] = []
         system = platform.system()
         release = platform.release()
-        supported_windows = system == "Windows"
+        is_windows = system == "Windows"
+        supported_runtime = system in {"Windows", "Darwin", "Linux"}
         checks.append(self._result(
             "operating-system",
             "操作系统",
-            "passed" if supported_windows else "failed",
+            "passed" if supported_runtime else "failed",
             f"{system} {release}",
-            "Windows 10 22H2 或 Windows 11 x64",
-            "请在受支持的 Windows 电脑上安装正式版本。",
-            blocking=not supported_windows,
+            "Windows x64 正式版，或 macOS / Linux 本地开发运行",
+            (
+                "无需操作。"
+                if is_windows
+                else "当前为本地开发运行；Windows 正式版的安装和更新由轻量启动器负责。"
+            ),
+            blocking=not supported_runtime,
         ))
 
         machine = platform.machine().lower()
-        supported_arch = machine in {"amd64", "x86_64"}
+        supported_windows_arch = machine in {"amd64", "x86_64"}
+        supported_runtime_arch = supported_windows_arch or not is_windows
         checks.append(self._result(
             "architecture",
             "处理器架构",
-            "passed" if supported_arch else "failed",
+            "passed" if supported_runtime_arch else "failed",
             machine or "unknown",
-            "x64",
-            "首期不支持 ARM64，请使用 x64 Windows 设备。",
-            blocking=not supported_arch,
+            "当前平台可运行；Windows 正式版需 x64",
+            (
+                "无需操作。"
+                if supported_runtime_arch
+                else "Windows 正式版首期不支持 ARM64，请使用 x64 Windows 设备。"
+            ),
+            blocking=not supported_runtime_arch,
         ))
 
         writable, write_message = self._check_writable(self.database.data_dir)
@@ -380,15 +390,9 @@ class EnvironmentService:
     def _network_checks(self, include_network: bool) -> list[dict[str, Any]]:
         manifest_url = os.environ.get("AUTO_VOUCHER_UPDATE_MANIFEST_URL", "").strip()
         if not manifest_url:
-            return [self._result(
-                "update-service",
-                "在线更新服务",
-                "warning",
-                "开发环境未配置更新地址",
-                "正式版本使用 HTTPS 更新地址",
-                "正式发布前配置 Cloudflare R2/CDN 版本清单地址。",
-                blocking=False,
-            )]
+            # Local development does not use the signed Windows update stream.
+            # Launcher status owns user-facing update availability in releases.
+            return []
         if not manifest_url.startswith("https://"):
             return [self._result(
                 "update-service",
@@ -460,6 +464,8 @@ class EnvironmentService:
         )
 
     def _keyring_check(self) -> dict[str, Any]:
+        system = platform.system()
+        credential_name = "Windows 凭据管理器" if system == "Windows" else "系统密钥库"
         connector_id = f"environment-check-{uuid.uuid4().hex}"
         secret_name = "temporary"
         expected = uuid.uuid4().hex
@@ -481,13 +487,17 @@ class EnvironmentService:
                 pass
         return self._result(
             "credential-manager",
-            "Windows 凭据管理器",
+            credential_name,
             "passed" if available else "warning",
             actual,
             "可安全保存连接器密钥",
-            "修复系统凭据管理器后才能配置密钥或启用生产。",
+            (
+                "修复 Windows 凭据管理器后才能配置连接器密钥或启用生产。"
+                if system == "Windows"
+                else "当前本地开发运行无法写入系统密钥库；需要密钥的 API 连接器无法配置，文件与模板流程不受影响。"
+            ),
             blocking=False,
-            production_blocking=not available,
+            production_blocking=bool(system == "Windows" and not available),
         )
 
     def _browser_check(self) -> dict[str, Any]:

@@ -20,6 +20,125 @@ from .importers import header_fingerprint, headers_for, parse_rows
 
 STATE_VERSION = 2
 
+APPROVAL_PROFILE_DEFAULTS = {
+    "approvalName": "",
+    "approvalFields": [],
+    "fieldMapping": {},
+    "fieldSources": [],
+    "additionalApprovalFieldIds": [],
+    "syncCursor": {},
+}
+
+
+def approval_profile_id(approval_code: str) -> str:
+    digest = hashlib.sha256(str(approval_code or "").encode("utf-8")).hexdigest()[:12]
+    return f"approval-{digest}"
+
+
+def legacy_approval_profile(connector: dict[str, Any]) -> dict[str, Any] | None:
+    approval_code = str(connector.get("approvalCode") or "").strip()
+    if not approval_code:
+        return None
+    return {
+        "id": approval_profile_id(approval_code),
+        "approvalCode": approval_code,
+        **{
+            key: json.loads(json.dumps(connector.get(key, default), ensure_ascii=False))
+            for key, default in APPROVAL_PROFILE_DEFAULTS.items()
+        },
+    }
+
+KINGDEE_MASTER_DATA_QUERIES: list[dict[str, Any]] = [
+    {"category": "organization", "categoryLabel": "组织", "formId": "ORG_Organizations", "fields": ["FNumber", "FName"]},
+    {"category": "accountBook", "categoryLabel": "账簿", "formId": "BD_AccountBook", "fields": ["FNumber", "FName"]},
+    {"category": "account", "categoryLabel": "科目", "formId": "BD_Account", "fields": ["FNumber", "FName"]},
+    {"category": "customer", "categoryLabel": "客户", "formId": "BD_Customer", "fields": ["FNumber", "FName"]},
+    {"category": "supplier", "categoryLabel": "供应商", "formId": "BD_Supplier", "fields": ["FNumber", "FName"]},
+    {"category": "department", "categoryLabel": "部门", "formId": "BD_Department", "fields": ["FNumber", "FName"]},
+    {"category": "employee", "categoryLabel": "员工", "formId": "BD_Empinfo", "fields": ["FNumber", "FName"]},
+    {"category": "project", "categoryLabel": "项目", "formId": "BD_Project", "fields": ["FNumber", "FName"], "optional": True},
+    {"category": "otherCounterparty", "categoryLabel": "其他往来", "formId": "FIN_OTHERS", "fields": ["FNumber", "FName"]},
+    {"category": "assistantCategory", "categoryLabel": "辅助资料类别", "formId": "BOS_ASSISTANTDATA", "fields": ["FNumber", "FName"]},
+    {
+        "category": "assistantData",
+        "categoryLabel": "辅助资料",
+        "formId": "BOS_ASSISTANTDATA_DETAIL",
+        "fields": ["FId", "FNumber", "FDataValue"],
+        "idFields": ["FId", "FNumber"],
+        "codeField": "FNumber",
+        "nameField": "FDataValue",
+        "replaceLegacyIdentity": True,
+    },
+    {"category": "dimensionDefinition", "categoryLabel": "核算维度定义", "formId": "BAS_FLEX", "fields": ["FNumber", "FName"]},
+    {"category": "accountDimension", "categoryLabel": "科目核算维度", "formId": "BD_FLEXITEMPROPERTY", "fields": ["FNumber", "FName"]},
+    {"category": "dimensionGroup", "categoryLabel": "核算维度组", "formId": "BD_FLEXITEMGROUP", "fields": ["FNumber", "FName"]},
+    {
+        "category": "dimensionValue",
+        "categoryLabel": "核算维度值",
+        "formId": "BD_FLEXITEMDETAILV",
+        "fields": [
+            "FFlex4.FNumber", "FFlex4.FName",
+            "FFlex5.FNumber", "FFlex5.FName",
+            "FFlex6.FNumber", "FFlex6.FName",
+            "FFlex7.FNumber", "FFlex7.FName",
+            "FFlex8.FNumber", "FFlex8.FName",
+            "FFLEX9.FNumber", "FFLEX9.FName",
+            "FFLEX11.FNumber", "FFLEX11.FName",
+            "FFLEX14.FNumber", "FFLEX14.FName",
+            "FFLEX15.FNumber", "FFLEX15.FName",
+            "FFLEX16.FNumber", "FFLEX16.FName",
+            "FF100002.FNumber", "FF100002.FName",
+            "FF100003", "FF100004", "FF100006", "FF100007",
+        ],
+        "dimensionMappings": [
+            {"category": "dimensionSupplier", "categoryLabel": "核算维度·供应商", "codeField": "FFlex4.FNumber", "nameField": "FFlex4.FName"},
+            {"category": "dimensionDepartment", "categoryLabel": "核算维度·部门", "codeField": "FFlex5.FNumber", "nameField": "FFlex5.FName"},
+            {"category": "dimensionCustomer", "categoryLabel": "核算维度·客户", "codeField": "FFlex6.FNumber", "nameField": "FFlex6.FName"},
+            {"category": "dimensionEmployee", "categoryLabel": "核算维度·员工", "codeField": "FFlex7.FNumber", "nameField": "FFlex7.FName"},
+            {"category": "dimensionMaterial", "categoryLabel": "核算维度·物料", "codeField": "FFlex8.FNumber", "nameField": "FFlex8.FName"},
+            {"category": "dimensionExpense", "categoryLabel": "核算维度·费用项目", "codeField": "FFLEX9.FNumber", "nameField": "FFLEX9.FName"},
+            {"category": "dimensionOrganization", "categoryLabel": "核算维度·组织机构", "codeField": "FFLEX11.FNumber", "nameField": "FFLEX11.FName"},
+            {"category": "dimensionBank", "categoryLabel": "核算维度·银行", "codeField": "FFLEX14.FNumber", "nameField": "FFLEX14.FName"},
+            {"category": "dimensionBankAccount", "categoryLabel": "核算维度·银行账号", "codeField": "FFLEX15.FNumber", "nameField": "FFLEX15.FName"},
+            {"category": "dimensionOtherCounterparty", "categoryLabel": "核算维度·其他往来", "codeField": "FFLEX16.FNumber", "nameField": "FFLEX16.FName"},
+            {"category": "dimensionServiceType", "categoryLabel": "核算维度·服务类型", "codeField": "FF100002.FNumber", "nameField": "FF100002.FName"},
+            {"category": "dimensionUnit", "categoryLabel": "核算维度·Unit", "codeField": "FF100003", "nameField": "FF100003"},
+            {"category": "dimensionRegion", "categoryLabel": "核算维度·入账地区", "codeField": "FF100004", "nameField": "FF100004"},
+            {"category": "dimensionOldProject", "categoryLabel": "核算维度·旧项目", "codeField": "FF100006", "nameField": "FF100006"},
+            {"category": "dimensionNewProject", "categoryLabel": "核算维度·新项目", "codeField": "FF100007", "nameField": "FF100007"},
+        ],
+    },
+    {"category": "expense", "categoryLabel": "费用项目", "formId": "BD_Expense", "fields": ["FNumber", "FName"]},
+    {"category": "currency", "categoryLabel": "币种", "formId": "BD_Currency", "fields": ["FNumber", "FName"]},
+    {
+        "category": "exchangeRate",
+        "categoryLabel": "汇率",
+        "formId": "BD_Rate",
+        "fields": [
+            "FRateID",
+            "FRATETYPEID.FNumber",
+            "FRATETYPEID.FName",
+            "FBegDate",
+            "FEndDate",
+            "FCyForID.FNumber",
+            "FCyForID.FName",
+            "FCyToID.FNumber",
+            "FCyToID.FName",
+            "FExchangeRate",
+            "FReverseExRate",
+            "FDocumentStatus",
+            "FForbidStatus",
+        ],
+        "codeField": "FRateID",
+        "nameField": "FRATETYPEID.FName",
+    },
+    {"category": "taxRate", "categoryLabel": "税率", "formId": "BD_TaxRate", "fields": ["FNumber", "FName"]},
+    {"category": "unit", "categoryLabel": "计量单位", "formId": "BD_UNIT", "fields": ["FNumber", "FName"]},
+    {"category": "bank", "categoryLabel": "银行", "formId": "CN_BANK", "fields": ["FNumber", "FName"], "optional": True},
+    {"category": "material", "categoryLabel": "物料", "formId": "BD_MATERIAL", "fields": ["FNumber", "FName"]},
+    {"category": "stock", "categoryLabel": "仓库", "formId": "BD_STOCK", "fields": ["FNumber", "FName"]},
+]
+
 CAPABILITY_CATALOG: dict[str, Any] = {
     "version": "2026.07.1",
     "targets": [
@@ -88,13 +207,18 @@ CAPABILITY_CATALOG: dict[str, Any] = {
     "sources": [
         {
             "id": "feishu-oa-json",
-            "brand": "飞书",
-            "product": "审批 API（JSON）",
-            "versions": ["开放平台"],
-            "adapter": "oa-json-api",
+            "brand": "飞书 / Lark",
+            "product": "审批",
+            "versions": ["审批 v4"],
+            "adapter": "feishu-approval-v4",
             "modes": ["api"],
             "verification": "configuration-required",
-            "capabilities": ["probe", "json_incremental_sync", "field_mapping"],
+            "capabilities": [
+                "probe",
+                "approval_definition_read",
+                "approval_incremental_sync",
+                "field_mapping",
+            ],
         },
         {
             "id": "wecom-oa-json",
@@ -177,8 +301,8 @@ def empty_production_state() -> dict[str, Any]:
         "readiness": {
             "plan": {"status": "not_ready", "validatedAt": None, "reasons": ["尚未生成接入方案"]},
             "systems": {"status": "not_ready", "validatedAt": None, "reasons": ["尚未完成系统与数据验证"]},
-            "rules": {"status": "not_ready", "validatedAt": None, "reasons": ["尚未确认凭证规则"]},
-            "production": {"status": "not_ready", "validatedAt": None, "reasons": ["尚未通过测试上线"]},
+            "rules": {"status": "not_ready", "validatedAt": None, "reasons": ["尚未确认凭证场景"]},
+            "production": {"status": "not_ready", "validatedAt": None, "reasons": ["尚未完成生产启用验证"]},
         },
         "productionActivation": {
             "enabled": False,
@@ -206,6 +330,9 @@ def empty_production_state() -> dict[str, Any]:
         "defaultAccountsInitialized": True,
         "defaultAccountSource": dict(DEFAULT_ACCOUNT_SOURCE),
         "mappingTemplates": [],
+        "approvalProcessingRules": [],
+        "approvalUnionSelections": {},
+        "approvalProcessingConfirmations": {},
         "auditLog": [],
         "syncLog": [],
         "externalQueryCache": [],
@@ -230,6 +357,122 @@ def ensure_state_v2(state: dict[str, Any]) -> bool:
         changed = True
     if initialize_default_accounts(state):
         changed = True
+    for connector in state.get("connectors", []):
+        if (
+            connector.get("id") == "feishu-oa-json"
+            and connector.get("name") != "飞书 / Lark 审批"
+        ):
+            connector["name"] = "飞书 / Lark 审批"
+            changed = True
+        if (
+            connector.get("id") == "feishu-oa-json"
+            and connector.get("adapter") == "oa-json-api"
+        ):
+            connector["adapter"] = "feishu-approval-v4"
+            connector["status"] = "not_configured"
+            connector["capabilities"] = []
+            connector["lastProbe"] = None
+            changed = True
+        if connector.get("adapter") == "feishu-approval-v4":
+            platform = str(connector.get("platform") or "").strip().lower()
+            if platform not in {"feishu", "lark"}:
+                platform = (
+                    "lark"
+                    if "larksuite.com" in str(connector.get("baseUrl") or "").lower()
+                    else "feishu"
+                )
+                connector["platform"] = platform
+                changed = True
+            expected_base_url = (
+                "https://open.larksuite.com"
+                if platform == "lark"
+                else "https://open.feishu.cn"
+            )
+            if connector.get("baseUrl") != expected_base_url:
+                connector["baseUrl"] = expected_base_url
+                changed = True
+            for key, default in (
+                ("appId", ""),
+                ("approvalCode", ""),
+                ("queryDateFrom", ""),
+                ("queryDateTo", ""),
+                ("approvalFields", []),
+                ("fieldMapping", {}),
+                ("fieldSources", []),
+                ("additionalApprovalFieldIds", []),
+                ("syncCursor", {}),
+            ):
+                if key not in connector:
+                    connector[key] = json.loads(json.dumps(default, ensure_ascii=False))
+                    changed = True
+            if "approvalProfiles" not in connector:
+                legacy_profile = legacy_approval_profile(connector)
+                connector["approvalProfiles"] = [legacy_profile] if legacy_profile else []
+                changed = True
+            for profile in connector.get("approvalProfiles", []):
+                if not isinstance(profile, dict):
+                    continue
+                approval_code = str(profile.get("approvalCode") or "").strip()
+                if not profile.get("id") and approval_code:
+                    profile["id"] = approval_profile_id(approval_code)
+                    changed = True
+                for key, default in APPROVAL_PROFILE_DEFAULTS.items():
+                    if key not in profile:
+                        profile[key] = json.loads(json.dumps(default, ensure_ascii=False))
+                        changed = True
+        if connector.get("adapter") != "kingdee-k3cloud-webapi-v6":
+            continue
+        if "serverUrl" not in connector:
+            connector["serverUrl"] = connector.pop("baseUrl", "")
+            changed = True
+        if "acctId" not in connector:
+            connector["acctId"] = connector.pop("accountId", "")
+            changed = True
+        if connector.get("authMode") != "app-id-secret-v3":
+            connector["authMode"] = "app-id-secret-v3"
+            connector["appId"] = str(connector.get("appId") or "")
+            connector["orgNum"] = str(connector.get("orgNum") or "80016")
+            connector["status"] = "not_configured"
+            connector["capabilities"] = []
+            connector["lastProbe"] = None
+            changed = True
+        queries = connector.setdefault("masterDataQueries", [])
+        for query in queries:
+            if query.get("formId") == "FIN_OTHERS" and query.get("category") == "counterparty":
+                query["category"] = "otherCounterparty"
+                query["categoryLabel"] = "其他往来"
+                changed = True
+            if query.get("formId") == "BOS_ASSISTANTDATA_DETAIL":
+                assistant_default = next(
+                    item for item in KINGDEE_MASTER_DATA_QUERIES
+                    if item["formId"] == "BOS_ASSISTANTDATA_DETAIL"
+                )
+                for key in ("idFields", "codeField", "nameField", "replaceLegacyIdentity", "categoryLabel"):
+                    if query.get(key) != assistant_default[key]:
+                        query[key] = json.loads(json.dumps(assistant_default[key], ensure_ascii=False))
+                        changed = True
+                if "idField" in query:
+                    query.pop("idField")
+                    changed = True
+            if query.get("formId") == "BD_FLEXITEMDETAILV":
+                dimension_default = next(
+                    item for item in KINGDEE_MASTER_DATA_QUERIES
+                    if item["formId"] == "BD_FLEXITEMDETAILV"
+                )
+                for key in ("fields", "dimensionMappings", "categoryLabel"):
+                    if query.get(key) != dimension_default[key]:
+                        query[key] = json.loads(json.dumps(dimension_default[key], ensure_ascii=False))
+                        changed = True
+            if query.get("formId") in {"BD_Project", "CN_BANK"} and query.get("optional") is not True:
+                query["optional"] = True
+                changed = True
+        known_form_ids = {str(query.get("formId") or "") for query in queries}
+        for default_query in KINGDEE_MASTER_DATA_QUERIES:
+            if default_query["formId"] in known_form_ids:
+                continue
+            queries.append(json.loads(json.dumps(default_query, ensure_ascii=False)))
+            known_form_ids.add(default_query["formId"])
+            changed = True
     return changed
 
 
@@ -248,12 +491,25 @@ def connector_template(system_id: str, *, environment: str = "测试环境") -> 
         "adapter": entry["adapter"],
         "environment": environment,
         "status": "not_configured",
-        "baseUrl": "https://open.feishu.cn" if system_id == "feishu-approval" else "",
+        "baseUrl": "https://open.feishu.cn" if entry["adapter"] == "feishu-approval-v4" else "",
         "capabilities": [],
         "leastPrivilegeConfirmed": False,
     }
-    if system_id == "feishu-approval":
-        common.update({"appId": "", "approvalCode": "", "fieldMapping": {}, "syncCursor": {}})
+    if entry["adapter"] == "feishu-approval-v4":
+        common.update({
+            "platform": "feishu",
+            "appId": "",
+            "approvalCode": "",
+            "approvalName": "",
+            "queryDateFrom": "",
+            "queryDateTo": "",
+            "approvalFields": [],
+            "fieldMapping": {},
+            "fieldSources": [],
+            "additionalApprovalFieldIds": [],
+            "syncCursor": {},
+            "approvalProfiles": [],
+        })
     elif entry["adapter"] == "oa-json-api":
         common.update({
             "providerName": entry["brand"] if system_id != "other-oa-json" else "",
@@ -267,21 +523,28 @@ def connector_template(system_id: str, *, environment: str = "测试环境") -> 
             "syncCursor": {},
         })
     elif system_id == "kingdee-k3cloud":
+        common.pop("baseUrl", None)
         common.update({
-            "accountId": "",
+            "authMode": "app-id-secret-v3",
+            "serverUrl": "",
+            "acctId": "",
             "username": "",
+            "appId": "",
+            "orgNum": "80016",
             "ledger": "",
             "voucherFormId": "GL_VOUCHER",
+            "voucherGroup": "PZZ47",
+            "currencyCode": "PRE001",
+            "exchangeRateType": "001",
             "localeId": 2052,
+            "connectTimeout": 120,
+            "requestTimeout": 120,
             "approvalControlEnabled": True,
             "enforceTargetMasterData": True,
             "enforcePeriodQuery": True,
             "periodQuery": {},
             "dimensionFieldMap": {},
-            "masterDataQueries": [
-                {"category": "account", "formId": "BD_Account", "fields": ["FNumber", "FName"]},
-                {"category": "supplier", "formId": "BD_Supplier", "fields": ["FNumber", "FName"]},
-            ],
+            "masterDataQueries": json.loads(json.dumps(KINGDEE_MASTER_DATA_QUERIES, ensure_ascii=False)),
         })
     else:
         common.update({
@@ -447,7 +710,7 @@ class SetupService:
         enabled_rules = [item for item in state.get("rules", []) if item.get("enabled")]
         rule_reasons = []
         if not enabled_rules:
-            rule_reasons.append("尚无经人工确认并启用的凭证规则")
+            rule_reasons.append("尚无经人工确认并启用的凭证场景")
         for rule in enabled_rules:
             posting = rule.get("posting") or {}
             if not posting.get("debitAccountCode") or not posting.get("creditAccountCode"):

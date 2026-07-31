@@ -21,6 +21,7 @@ version = "0.2.7"
 source = { editable = "." }
 dependencies = [
     { name = "keyring" },
+    { name = "kingdee-cdp-webapi-sdk" },
     { name = "openpyxl" },
     { name = "xlrd" },
 ]
@@ -42,6 +43,7 @@ release = [
 [package.metadata]
 requires-dist = [
     { name = "keyring", specifier = "==25.7.0" },
+    { name = "kingdee-cdp-webapi-sdk", specifier = "==8.2.0" },
     { name = "openpyxl", specifier = "==3.1.5" },
     { name = "pypdfium2", marker = "extra == 'pdf'", specifier = "==4.30.0" },
     { name = "rapidocr-onnxruntime", marker = "extra == 'ocr'", specifier = "==1.4.4" },
@@ -427,6 +429,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/43/4b/674af6ef2f97d56f0ab5153bf0bfa28ccb6c3ed4d1babf4305449668807b/keyring-25.7.0.tar.gz", hash = "sha256:fe01bd85eb3f8fb3dd0405defdeac9a5b4f6f0439edbb3149577f244a2e8245b", size = 63516, upload-time = "2025-11-16T16:26:09.482Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/db/e655086b7f3a705df045bf0933bdd9c2f79bb3c97bfef1384598bb79a217/keyring-25.7.0-py3-none-any.whl", hash = "sha256:be4a0b195f149690c166e850609a477c532ddbfbaed96a404d4e43f8d5e2689f", size = 39160, upload-time = "2025-11-16T16:26:08.402Z" },
+]
+
+[[package]]
+name = "kingdee-cdp-webapi-sdk"
+version = "8.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+    { name = "urllib3" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/36/6d/0e91fc3c0441fcea9700cd55e9dd4171609b139ae37a4e7a6bea6e2d0c4d/kingdee.cdp.webapi.sdk-8.2.0-py3-none-any.whl", hash = "sha256:15c6c13e097425e0fdff1de425a986ff6ae1d4e418a98ce720a61fe7bd54f8f2", size = 15554, upload-time = "2025-07-15T08:32:29.882Z" },
 ]
 
 [[package]]

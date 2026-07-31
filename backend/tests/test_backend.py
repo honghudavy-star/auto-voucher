@@ -7,12 +7,20 @@ import tempfile
 import types
 import unittest
 import zipfile
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 from auto_voucher.database import Database
-from auto_voucher.importers import parse_csv, parse_rows, to_cents
+from auto_voucher.importers import (
+    apply_mapping,
+    event_from_row,
+    normalize_import_rows,
+    parse_csv,
+    parse_rows,
+    to_cents,
+)
 from auto_voucher.server import create_backup_package, inspect_backup, restore_backup
 from auto_voucher.security import redact_text
 from auto_voucher.service import (
@@ -41,6 +49,34 @@ def empty_state():
 class BackendTests(unittest.TestCase):
     def test_money_uses_integer_cents(self):
         self.assertEqual(to_cents("12,800.05"), 1_280_005)
+
+    def test_payment_amount_mapping_accepts_multiple_source_fields(self):
+        mapping = {"amount": ["借方", "贷方"]}
+
+        incoming = apply_mapping({"借方": "929.35", "贷方": ""}, mapping)
+        outgoing = apply_mapping({"借方": "", "贷方": "7991.85"}, mapping)
+
+        self.assertEqual(incoming["付款金额"], "929.35")
+        self.assertEqual(outgoing["付款金额"], "7991.85")
+        with self.assertRaisesRegex(ValueError, "付款金额.*多个值"):
+            apply_mapping({"借方": "100.00", "贷方": "200.00"}, mapping)
+
+    def test_business_event_preserves_source_currency_and_exchange_rate(self):
+        event = event_from_row(
+            {
+                "业务日期": "2026-07-24",
+                "供应商": "菲律宾供应商",
+                "含税金额": "708.00",
+                "审批单号": "SP-PHP-1",
+                "币别": "PHP",
+                "汇率": "0.0174",
+            },
+            "DOC-1",
+            1,
+            "TEST",
+        )
+        self.assertEqual(event["currency"], "PHP")
+        self.assertEqual(event["exchangeRate"], "0.0174")
 
     def test_audit_log_redacts_tokens_and_long_account_numbers(self):
         value = redact_text(
@@ -228,6 +264,159 @@ class BackendTests(unittest.TestCase):
             self.assertEqual(preview["headers"], ["业务日期", "供应商", "含税金额", "审批单号"])
             self.assertEqual(result["createdEvents"], 1)
             self.assertEqual(result["state"]["events"][0]["amountCents"], 12_850)
+
+    def test_bank_journal_xlsx_preview_and_import_normalizes_directional_amounts(self):
+        from openpyxl import Workbook
+
+        output = BytesIO()
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append([
+            "日期",
+            "唯一标识码",
+            "我方账户",
+            "主体账号",
+            "币种",
+            "借方",
+            "贷方",
+            "余额",
+            "交易对手主体",
+            "交易对手账号",
+            "摘要（备注）",
+            "Lark 编号",
+        ])
+        sheet.append([
+            datetime(2026, 7, 6),
+            "BANK-OUT-001",
+            "测试银行",
+            "SELF-001",
+            "CNY",
+            None,
+            7_991.85,
+            100_000,
+            "付款供应商",
+            "VENDOR-001",
+            "采购付款",
+            "202607050002",
+        ])
+        sheet.append([
+            datetime(2026, 7, 7),
+            "BANK-IN-001",
+            "测试银行",
+            "SELF-001",
+            "CNY",
+            929.35,
+            None,
+            100_929.35,
+            "回款客户",
+            "CUSTOMER-001",
+            "客户回款",
+            "",
+        ])
+        sheet.append([
+            datetime(2026, 7, 8),
+            "BANK-OUT-002",
+            "测试银行",
+            "SELF-001",
+            "CNY",
+            None,
+            100.00,
+            100_829.35,
+            "另一付款供应商",
+            "VENDOR-002",
+            "同一审批的第二笔付款",
+            "202607050002",
+        ])
+        workbook.save(output)
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory))
+            database.put_state(empty_state())
+            service = VoucherService(database)
+            content = output.getvalue()
+
+            preview = service.preview_file("银行日记账.xlsx", content)
+            json.dumps(preview, ensure_ascii=False)
+            self.assertEqual(preview["importProfile"], "bankStatement")
+            self.assertEqual(len(preview["sourceHeaders"]), 12)
+            self.assertEqual(preview["sourceHeaders"], [
+                "日期",
+                "唯一标识码",
+                "我方账户",
+                "主体账号",
+                "币种",
+                "借方",
+                "贷方",
+                "余额",
+                "交易对手主体",
+                "交易对手账号",
+                "摘要（备注）",
+                "Lark 编号",
+            ])
+            self.assertEqual(set(preview["derivedHeaders"]), {
+                "付款金额",
+                "流水号",
+                "资料类型",
+                "业务类型",
+                "收支方向",
+                "摘要",
+                "我方账号",
+            })
+            self.assertEqual(preview["sampleRows"][0]["日期"], "2026-07-06")
+            self.assertEqual(preview["suggestedMapping"]["counterparty"], "交易对手主体")
+            self.assertEqual(preview["suggestedMapping"]["amount"], ["借方", "贷方"])
+            self.assertEqual(preview["suggestedMapping"]["reference"], "Lark 编号")
+
+            result = service.import_files(
+                [("银行日记账.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")],
+                mapping=preview["suggestedMapping"],
+            )
+            self.assertEqual(result["success"], 1)
+            self.assertEqual(result["createdEvents"], 3)
+            events = {
+                event["sourceRecords"][0]["referenceFields"]["bankSerial"]: event
+                for event in result["state"]["events"]
+            }
+            outgoing = events["BANK-OUT-001"]
+            second_outgoing = events["BANK-OUT-002"]
+            incoming = events["BANK-IN-001"]
+            self.assertEqual(outgoing["date"], "2026-07-06")
+            self.assertEqual(outgoing["amountCents"], 799_185)
+            self.assertEqual(outgoing["counterparty"], "付款供应商")
+            self.assertEqual(outgoing["reference"], "202607050002")
+            self.assertEqual(outgoing["bankDirection"], "outflow")
+            self.assertEqual(outgoing["type"], "银行付款")
+            self.assertEqual(outgoing["bankAccount"], "VENDOR-001")
+            self.assertEqual(second_outgoing["reference"], "202607050002")
+            self.assertEqual(second_outgoing["amountCents"], 10_000)
+            self.assertEqual(incoming["amountCents"], 92_935)
+            self.assertEqual(incoming["bankDirection"], "inflow")
+            self.assertEqual(incoming["type"], "银行收款")
+
+    def test_bank_journal_derives_distinct_serials_when_source_identifier_repeats(self):
+        rows = normalize_import_rows([
+            {
+                "日期": "2026-07-06",
+                "唯一标识码": "ACCOUNT-IDENTIFIER",
+                "交易对手主体": "供应商甲",
+                "交易对手账号": "VENDOR-001",
+                "借方": "",
+                "贷方": "100.00",
+                "Lark 编号": "202607050002",
+            },
+            {
+                "日期": "2026-07-07",
+                "唯一标识码": "ACCOUNT-IDENTIFIER",
+                "交易对手主体": "供应商乙",
+                "交易对手账号": "VENDOR-002",
+                "借方": "",
+                "贷方": "200.00",
+                "Lark 编号": "202607050002",
+            },
+        ])
+
+        self.assertEqual(len({row["流水号"] for row in rows}), 2)
+        self.assertTrue(all(row["源唯一标识码"] == "ACCOUNT-IDENTIFIER" for row in rows))
 
     def test_legacy_xls_uses_first_sheet_and_preserves_headers(self):
         class FakeSheet:
