@@ -42,6 +42,12 @@ docker version
 
 镜像是在 `win-office` Windows 构建机上预先构建并验证的，用户电脑不会执行 `docker build`。
 
+## 首次安装与后续更新
+
+首次运行时，如果本机没有 Docker，脚本会先完成 Docker Desktop 安装，再拉取镜像、创建 `auto-voucher` 容器和 `auto-voucher-data` 数据卷。
+
+后续运行同一条命令时，脚本会重新拉取 `latest` 镜像，替换旧容器并继续挂载原来的数据卷。更新过程中不会删除业务数据；如果新容器未通过健康检查，脚本会自动用旧镜像回滚。
+
 ## 打开工作台
 
 浏览器访问：

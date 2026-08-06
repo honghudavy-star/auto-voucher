@@ -92,6 +92,9 @@ test("Windows Docker documentation uses one command and mainland acceleration wi
   assert.match(guide, /-AcceptDockerLicense/);
   assert.match(guide, /ghcr\.m\.daocloud\.io\/honghudavy-star\/auto-voucher:latest/);
   assert.match(guide, /中科大 Docker Hub 缓存也已经关闭/);
+  assert.match(guide, /首次运行时，如果本机没有 Docker/);
+  assert.match(guide, /后续运行同一条命令时，脚本会重新拉取 `latest` 镜像/);
+  assert.match(guide, /新容器未通过健康检查，脚本会自动用旧镜像回滚/);
   assert.match(guide, /保留 `auto-voucher-data` 数据卷/);
   assert.doesNotMatch(guide, /docker compose up[^\n]*--build/i);
   assert.doesNotMatch(guide, /ghcr\.io\/honghudavy-star\/auto-voucher:0\.2\.7/);
