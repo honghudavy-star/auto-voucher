@@ -56,8 +56,22 @@ function Test-DockerServer {
     if ([string]::IsNullOrWhiteSpace($script:DockerCommand)) {
         return $false
     }
-    & $script:DockerCommand version --format "{{.Server.Version}}" 2>$null | Out-Null
-    return $LASTEXITCODE -eq 0
+
+    # Windows PowerShell 5.1 promotes native stderr to a terminating
+    # NativeCommandError when the caller uses $ErrorActionPreference=Stop.
+    # A stopped Docker daemon is an expected probe result, so keep this
+    # command non-terminating and decide readiness from its exit code.
+    $ProbeErrorActionPreference = $ErrorActionPreference
+    $ProbeExitCode = 1
+    try {
+        $ErrorActionPreference = "Continue"
+        & $script:DockerCommand version --format "{{.Server.Version}}" 2>$null | Out-Null
+        $ProbeExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $ProbeErrorActionPreference
+    }
+    return $ProbeExitCode -eq 0
 }
 
 function Wait-DockerServer {

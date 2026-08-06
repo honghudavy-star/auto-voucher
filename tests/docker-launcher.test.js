@@ -76,6 +76,34 @@ test("Windows installer only pulls the prebuilt image and preserves Docker data 
   assert.doesNotMatch(installer, /[^\x00-\x7F]/);
 });
 
+test("Windows Docker probe treats a stopped daemon as a boolean failure", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("PowerShell 5.1 native stderr behavior is Windows-only");
+    return;
+  }
+
+  const installer = await readFile(installerPath, "utf8");
+  const start = installer.indexOf("function Test-DockerServer {");
+  const end = installer.indexOf("\nfunction Wait-DockerServer", start);
+  assert.ok(start >= 0 && end > start, "Test-DockerServer function must remain extractable");
+  const probeFunction = installer.slice(start, end);
+  const probe = [
+    "$ErrorActionPreference = 'Stop'",
+    probeFunction,
+    "$script:DockerCommand = Join-Path $env:SystemRoot 'System32\\find.exe'",
+    "$result = Test-DockerServer",
+    "if ($result) { throw 'A failed Docker probe must not report a ready server.' }",
+    "'probe-result=false'",
+  ].join("\n");
+
+  const { spawnSync } = await import("node:child_process");
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /probe-result=false/);
+});
+
 test("Windows Docker documentation uses one command and mainland acceleration without local builds", async () => {
   const [readme, guide] = await Promise.all([
     readFile(readmePath, "utf8"),
