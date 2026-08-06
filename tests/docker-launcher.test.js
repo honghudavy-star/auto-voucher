@@ -67,14 +67,18 @@ test("Windows Docker documentation uses the public latest image without local bu
     readFile(windowsDockerGuidePath, "utf8"),
   ]);
 
-  for (const document of [readme, guide]) {
-    assert.match(document, /ghcr\.io\/honghudavy-star\/auto-voucher:latest/);
-    assert.match(document, /docker pull \$img/);
-    assert.match(document, /\$LASTEXITCODE -ne 0/);
-    assert.match(document, /auto-voucher-data:\/data/);
-    assert.doesNotMatch(document, /docker compose up[^\n]*--build/i);
-    assert.doesNotMatch(document, /ghcr\.io\/honghudavy-star\/auto-voucher:0\.2\.7/);
-  }
+  assert.match(readme, /docker run -d --pull always/);
+  assert.match(readme, /ghcr\.io\/honghudavy-star\/auto-voucher:latest/);
+  assert.match(readme, /auto-voucher-data:\/data/);
+  assert.doesNotMatch(readme, /docker compose up[^\n]*--build/i);
+  assert.doesNotMatch(readme, /ghcr\.io\/honghudavy-star\/auto-voucher:0\.2\.7/);
+
+  assert.match(guide, /ghcr\.io\/honghudavy-star\/auto-voucher:latest/);
+  assert.match(guide, /docker pull \$img/);
+  assert.match(guide, /\$LASTEXITCODE -ne 0/);
+  assert.match(guide, /auto-voucher-data:\/data/);
+  assert.doesNotMatch(guide, /docker compose up[^\n]*--build/i);
+  assert.doesNotMatch(guide, /ghcr\.io\/honghudavy-star\/auto-voucher:0\.2\.7/);
 
   assert.match(guide, /docker volume rm auto-voucher-data/);
   assert.match(guide, /此操作不可恢复/);

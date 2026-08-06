@@ -6,75 +6,19 @@ Auto Voucher 是一个开源、本地优先的财务凭证自动化工作台。�
 
 ## Windows Docker 一键启动（推荐）
 
-适用于 Windows 10/11。用户电脑只需要安装并启动 Docker Desktop，不需要安装 Git、Node.js 或 Python，也不会在本机编译项目。
-
-如果尚未安装 Docker Desktop，请先在 PowerShell 中执行：
+先安装并启动 Docker Desktop，确认使用 **Linux containers / WSL 2** 模式。然后打开 PowerShell，执行：
 
 ```powershell
-winget install -e --id Docker.DockerDesktop
+docker run -d --pull always --name auto-voucher --restart unless-stopped -p 127.0.0.1:8765:8765 -v auto-voucher-data:/data ghcr.io/honghudavy-star/auto-voucher:latest
 ```
 
-安装完成后启动 Docker Desktop，并确认使用默认的 **Linux containers / WSL 2** 模式。然后打开 PowerShell，复制下面这一整行命令：
-
-```powershell
-$img='ghcr.io/honghudavy-star/auto-voucher:latest'; docker pull $img; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; docker rm --force auto-voucher 2>$null; docker volume create auto-voucher-data | Out-Null; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; docker run --detach --name auto-voucher --restart unless-stopped --init --security-opt no-new-privileges --cap-drop ALL --cpus 2 --memory 2g --pids-limit 256 --publish 127.0.0.1:8765:8765 --volume auto-voucher-data:/data $img
-```
-
-该命令会从公开的 GHCR 拉取由 **`win-office` Windows 构建机**预先构建的 `latest` 镜像，创建程序容器，并将业务数据保存在 `auto-voucher-data` 数据卷中。重新执行同一条命令即可更新程序，原有数据不会被删除。
-
-启动后访问：
+启动成功后访问：
 
 ```text
 http://127.0.0.1:8765/
 ```
 
-检查运行状态：
-
-```powershell
-docker ps --filter name=auto-voucher
-Invoke-RestMethod http://127.0.0.1:8765/api/health
-```
-
-停止和重新启动：
-
-```powershell
-docker stop auto-voucher
-docker start auto-voucher
-```
-
-查看日志：
-
-```powershell
-docker logs --tail 200 auto-voucher
-```
-
-如果已经下载完整项目，也可以运行根目录的安装器。它会执行健康检查，并在更新失败时恢复旧镜像：
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-Auto-Voucher-Docker.ps1
-```
-
-或者双击 `Start-Auto-Voucher-Docker.bat`，使用 Compose 拉取并启动公开镜像。两个入口都不会执行 `docker build`。
-
-指定其他端口：
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-Auto-Voucher-Docker.ps1 -Port 8877
-```
-
-然后访问 `http://127.0.0.1:8877/`。
-
-数据保存在 Docker 命名卷 **`auto-voucher-data`** 中。停止、更新或重建容器都不会删除该卷。不要运行下面的命令，除非你确认要永久删除全部本地业务数据：
-
-```powershell
-docker volume rm auto-voucher-data
-```
-
-也不要使用 `docker compose down -v`。重要数据仍应定期在工作台中导出备份包。
-
-Docker 版的端口只发布到 Windows 本机 `127.0.0.1`，不会默认暴露给局域网。当前 Linux 容器不能直接调用 Windows 凭据管理器，因此需要保存 AppSecret、访问令牌等密钥的 ERP/OA API 直连暂不适合 Docker 版；文件导入、规则处理、凭证草稿、人工复核和模板导出不受影响。需要完整连接器密钥能力时，请继续使用下面的 Windows 源码运行方式。
-
-完整操作、更新、卸载和故障排查请参阅 [Windows Docker 一键启动指南](docs/Windows-Docker一键启动.md)。
+该命令会自动拉取公开的 `latest` 镜像并保存数据到 `auto-voucher-data`。不需要安装 Git、Node.js 或 Python，也不会在用户电脑上构建镜像。更新、停止、卸载和故障排查请参阅 [Windows Docker 一键启动指南](docs/Windows-Docker一键启动.md)。
 
 ## Windows 源码运行
 
@@ -179,8 +123,6 @@ Install-Auto-Voucher-Docker.ps1  Windows 预构建镜像安装器
 - [Windows 发版清单](docs/Windows发版清单.md)
 - [v0.2.2 发布说明](docs/v0.2.2发布说明.md)
 - [v0.2.0 发布说明](docs/v0.2.0发布说明.md)
-- [长视频讲解与宣传脚本](docs/Auto-Voucher长视频讲解与宣传脚本.md)
-- [小红书文案与实机录屏脚本](docs/小红书与实机录屏文案.md)
 - [产品需求说明](specs/auto-voucher-prd.spec.md)
 
 ## 参与贡献
