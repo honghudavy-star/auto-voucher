@@ -82,13 +82,13 @@ test("Windows Docker documentation uses one command and mainland acceleration wi
     readFile(windowsDockerGuidePath, "utf8"),
   ]);
 
-  assert.match(readme, /Install-Auto-Voucher-Docker\.ps1\?v=20260805/);
+  assert.match(readme, /2a2d7cef5617a85672884d28eb3b5e890cc1df33\/Install-Auto-Voucher-Docker\.ps1/);
   assert.match(readme, /-AcceptDockerLicense/);
   assert.match(readme, /files\.m\.daocloud\.io/);
   assert.doesNotMatch(readme, /docker compose up[^\n]*--build/i);
   assert.doesNotMatch(readme, /ghcr\.io\/honghudavy-star\/auto-voucher:0\.2\.7/);
 
-  assert.match(guide, /Install-Auto-Voucher-Docker\.ps1\?v=20260805/);
+  assert.match(guide, /2a2d7cef5617a85672884d28eb3b5e890cc1df33\/Install-Auto-Voucher-Docker\.ps1/);
   assert.match(guide, /-AcceptDockerLicense/);
   assert.match(guide, /ghcr\.m\.daocloud\.io\/honghudavy-star\/auto-voucher:latest/);
   assert.match(guide, /中科大 Docker Hub 缓存也已经关闭/);

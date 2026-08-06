@@ -9,7 +9,7 @@ Auto Voucher 是一个开源、本地优先的财务凭证自动化工作台。�
 打开 PowerShell，复制下面这一整行命令并回车：
 
 ```powershell
-$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/main/Install-Auto-Voucher-Docker.ps1?v=20260805'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense
+$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/2a2d7cef5617a85672884d28eb3b5e890cc1df33/Install-Auto-Voucher-Docker.ps1'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense
 ```
 
 如果电脑没有 Docker，该命令会从中国内地加速地址下载 Docker Desktop，校验 Docker Inc. 数字签名后自动安装并启动；如果已经安装，则直接拉取并启动 Auto Voucher。首次启用 WSL 2 时 Windows 可能要求重启，重启后再执行同一条命令即可。
