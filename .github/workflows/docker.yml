@@ -1,0 +1,81 @@
+name: Docker
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/docker.yml"
+      - ".dockerignore"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "Start-Auto-Voucher-Docker.bat"
+      - "Start-Auto-Voucher-Docker.ps1"
+      - "backend/**"
+      - "packaging/**"
+      - "public/**"
+      - "src/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "pyproject.toml"
+      - "vite.config.js"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/docker.yml"
+      - ".dockerignore"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "Start-Auto-Voucher-Docker.bat"
+      - "Start-Auto-Voucher-Docker.ps1"
+      - "backend/**"
+      - "packaging/**"
+      - "public/**"
+      - "src/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "pyproject.toml"
+      - "vite.config.js"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-voucher-docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-smoke-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Build CI verification image
+        run: docker build --platform linux/amd64 --tag ghcr.io/honghudavy-star/auto-voucher:0.2.7 .
+
+      - name: Start Compose and wait for health
+        env:
+          AUTO_VOUCHER_PORT: "18765"
+        run: |
+          docker compose up --detach --no-build --wait --wait-timeout 120
+          health="$(curl --fail --silent --show-error http://127.0.0.1:18765/api/health)"
+          python3 -c 'import json, sys; value=json.loads(sys.argv[1]); assert value["ok"] and value["databaseStatus"] == "ok" and value["staticAssets"]' "$health"
+
+      - name: Scan image for critical vulnerabilities
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.66.0 \
+            image --skip-version-check --scanners vuln \
+            --exit-code 1 --ignore-unfixed --severity CRITICAL ghcr.io/honghudavy-star/auto-voucher:0.2.7
+
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs --tail 200 app
+
+      - name: Clean up ephemeral CI state
+        if: always()
+        run: docker compose down --volumes --remove-orphans

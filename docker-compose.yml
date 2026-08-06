@@ -1,0 +1,33 @@
+name: auto-voucher
+
+services:
+  app:
+    image: ${AUTO_VOUCHER_IMAGE:-ghcr.io/honghudavy-star/auto-voucher:latest}
+    container_name: auto-voucher
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${AUTO_VOUCHER_PORT:-8765}:8765"
+    volumes:
+      - auto-voucher-data:/data
+    environment:
+      AUTO_VOUCHER_CONTAINER: "1"
+      AUTO_VOUCHER_DATA_DIR: /data
+      AUTO_VOUCHER_STATIC_DIR: /app/dist
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cpus: 2.0
+    mem_limit: 2g
+    pids_limit: 256
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  auto-voucher-data:
+    name: auto-voucher-data

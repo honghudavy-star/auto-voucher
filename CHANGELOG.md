@@ -4,6 +4,17 @@
 
 ## [未发布]
 
+### Windows Docker 一键启动
+
+- 公开发布 `ghcr.io/honghudavy-star/auto-voucher:latest`，Windows 用户可以通过一条 PowerShell 命令直接拉取并启动。
+- 新增 PowerShell Docker 安装器：客户端无需 Git、Node.js 或 Python，只拉取由 `win-office` 预先构建的镜像；更新启动失败时按旧镜像 ID 自动回退，且不会删除 `auto-voucher-data` 数据卷。
+- 新增 Docker 多阶段镜像、Compose 编排和 Windows 双击启动脚本，端口仅发布到宿主机 `127.0.0.1`。
+- SQLite、归档和诊断数据保存在 `auto-voucher-data` 命名卷，重建容器不会删除业务数据。
+- 镜像包含 OCR/PDF 组件，以非 root 用户运行，并配置健康检查、自动重启、日志轮转和资源上限。
+- 新增 Linux AMD64 构建、Compose 冒烟和 Trivy Critical 漏洞扫描 CI 门禁。
+- 新增 Windows Docker 一键启动指南，说明首次启动、更新、停止、日志、端口修改、数据保留和故障排查。
+- Linux 容器不能直接调用 Windows 凭据管理器；需要保存连接器密钥的 ERP/OA API 直连仍应使用 Windows 源码运行方式。
+
 ### 审批与银行联合处理
 
 - 审批数据处理页按审批编号展示银行流水与审批记录的全外连接，保留银行独有、审批独有、金额差异和匹配成功四种状态。

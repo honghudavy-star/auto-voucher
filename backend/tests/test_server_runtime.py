@@ -8,10 +8,17 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from auto_voucher.database import Database
-from auto_voucher.server import JobManager, make_handler
+from auto_voucher.server import JobManager, bind_host_allowed, make_handler
 
 
 class ServerRuntimeTests(unittest.TestCase):
+    def test_container_bind_requires_explicit_container_mode(self):
+        self.assertTrue(bind_host_allowed("127.0.0.1", {}))
+        self.assertTrue(bind_host_allowed("localhost", {}))
+        self.assertFalse(bind_host_allowed("0.0.0.0", {}))
+        self.assertTrue(bind_host_allowed("0.0.0.0", {"AUTO_VOUCHER_CONTAINER": "1"}))
+        self.assertFalse(bind_host_allowed("192.168.1.10", {"AUTO_VOUCHER_CONTAINER": "1"}))
+
     def make_handler_instance(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

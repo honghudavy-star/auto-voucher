@@ -39,6 +39,18 @@ from .setup import (
 
 
 MAX_REQUEST_BYTES = 200 * 1024 * 1024
+LOOPBACK_BIND_HOSTS = {"127.0.0.1", "localhost"}
+CONTAINER_BIND_HOST = "0.0.0.0"
+
+
+def bind_host_allowed(host: str, environ: dict[str, str] | None = None) -> bool:
+    if host in LOOPBACK_BIND_HOSTS:
+        return True
+    environment = os.environ if environ is None else environ
+    return (
+        host == CONTAINER_BIND_HOST
+        and environment.get("AUTO_VOUCHER_CONTAINER", "").strip() == "1"
+    )
 
 
 class JobManager:
@@ -1086,12 +1098,17 @@ def main() -> None:
     parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
-    if args.host not in {"127.0.0.1", "localhost"}:
-        parser.error("默认版本只允许监听本机回环地址")
+    if not bind_host_allowed(args.host):
+        parser.error(
+            "默认版本只允许监听本机回环地址；容器模式必须同时设置 "
+            "AUTO_VOUCHER_CONTAINER=1 并使用 --host 0.0.0.0"
+        )
     database = Database(args.data_dir)
     diagnostics = DiagnosticLogger(database)
     bundled_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
-    static_dir = bundled_root / "dist"
+    static_dir = Path(
+        os.environ.get("AUTO_VOUCHER_STATIC_DIR", bundled_root / "dist")
+    ).resolve()
     handler = make_handler(database, static_dir, diagnostics, args.host, args.port)
     server = ThreadingHTTPServer(
         (args.host, args.port),
