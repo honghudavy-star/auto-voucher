@@ -203,9 +203,16 @@ try {
         Invoke-Docker -Arguments @("pull", $SelectedImage)
     }
 
-    $PreviousImageId = (& $script:DockerCommand inspect --format "{{.Image}}" $ContainerName 2>$null)
-    $ExistingContainer = $LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($PreviousImageId)
+    $ExistingContainerId = (& $script:DockerCommand ps --all --quiet --filter "name=^/$ContainerName$")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not inspect existing Docker containers."
+    }
+    $ExistingContainer = -not [string]::IsNullOrWhiteSpace($ExistingContainerId)
     if ($ExistingContainer) {
+        $PreviousImageId = (& $script:DockerCommand inspect --format "{{.Image}}" $ContainerName)
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($PreviousImageId)) {
+            throw "Could not read the existing Auto Voucher image for safe rollback."
+        }
         Write-Host "[Auto Voucher] Replacing the existing container without deleting its data volume" -ForegroundColor Cyan
         Invoke-Docker -Arguments @("rm", "--force", $ContainerName)
     }

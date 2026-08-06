@@ -64,6 +64,7 @@ test("Windows installer only pulls the prebuilt image and preserves Docker data 
   assert.match(installer, /"--security-opt", "no-new-privileges"/);
   assert.match(installer, /"--cap-drop", "ALL"/);
   assert.match(installer, /"--volume", "\$VolumeName`:\/data"/);
+  assert.match(installer, /ps --all --quiet --filter "name=\^\/\$ContainerName\$"/);
   assert.match(installer, /\$PreviousImageId = \(& \$script:DockerCommand inspect --format "\{\{\.Image\}\}"/);
   assert.match(installer, /Start-AutoVoucherContainer -SelectedImage \$PreviousImageId/);
   assert.match(installer, /Wait-AutoVoucherHealthy/);
