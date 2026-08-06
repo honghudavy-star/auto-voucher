@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from .security import assert_no_sensitive_fields
+
 
 DATABASE_SCHEMA_VERSION = 2
 
@@ -286,6 +288,7 @@ def validate_state(state: dict[str, Any]) -> None:
     required_lists = ("sourceDocuments", "events", "vouchers", "exceptions", "rules", "connectors", "auditLog")
     if not isinstance(state, dict) or not state.get("version"):
         raise ValueError("状态数据缺少版本号")
+    assert_no_sensitive_fields(state)
     for key in required_lists:
         if not isinstance(state.get(key), list):
             raise ValueError(f"状态数据字段 {key} 必须为数组")

@@ -88,6 +88,39 @@ class BackendTests(unittest.TestCase):
         self.assertNotIn("310101199001011234", value)
         self.assertIn("[REDACTED]", value)
 
+    def test_state_and_backup_reject_sensitive_fields_at_any_depth(self):
+        sensitive_fields = (
+            "appSecret",
+            "access_token",
+            "privateKey",
+            "certificatePassword",
+            "Authorization",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory))
+            for field in sensitive_fields:
+                with self.subTest(field=field):
+                    state = empty_state()
+                    state["connectors"] = [{
+                        "id": "connector-test",
+                        "config": {field: "synthetic-sensitive-value"},
+                    }]
+                    with self.assertRaisesRegex(ValueError, "密钥|令牌|密码"):
+                        database.put_state(state)
+                    with self.assertRaisesRegex(ValueError, "密钥|令牌|密码"):
+                        create_backup_package(database, state)
+
+            legitimate = empty_state()
+            legitimate["connectors"] = [{
+                "id": "connector-test",
+                "appId": "public-app-id",
+                "authMode": "app-id-secret-v3",
+                "syncCursor": {"pageToken": ""},
+                "lastProbe": {"report": {"tenantTokenIssued": True}},
+            }]
+            database.put_state(legitimate)
+            self.assertEqual(database.get_state()["connectors"][0]["appId"], "public-app-id")
+
     def test_audit_log_is_append_only(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Database(Path(directory))

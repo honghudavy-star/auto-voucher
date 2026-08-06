@@ -47,6 +47,26 @@ class DiagnosticTests(unittest.TestCase):
         self.assertNotIn("6222021234567890123", serialized)
         self.assertIn("[REDACTED]", serialized)
 
+    def test_free_text_redaction_covers_actual_secret_names_and_authorization_schemes(self):
+        sentinels = (
+            "app-secret-sentinel",
+            "private-key-sentinel",
+            "basic-authorization-sentinel",
+        )
+        self.logger.exception(
+            "connector",
+            "CONNECTOR_SECRET_FAILURE",
+            "app_secret=app-secret-sentinel",
+            RuntimeError(
+                "private_key=private-key-sentinel; "
+                "Authorization: Basic basic-authorization-sentinel"
+            ),
+        )
+        serialized = json.dumps(self.logger.query(search="CONNECTOR_SECRET_FAILURE"), ensure_ascii=False)
+        for sentinel in sentinels:
+            self.assertNotIn(sentinel, serialized)
+        self.assertIn("[REDACTED]", serialized)
+
     def test_settings_are_bounded_and_prune_overflow(self):
         settings = self.logger.update_settings(1, 2)
         self.assertEqual(settings["retentionDays"], 7)

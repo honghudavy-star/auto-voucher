@@ -1023,6 +1023,7 @@ def restore_backup(database: Database, content: bytes) -> dict:
 
 
 def create_backup_package(database: Database, state: dict) -> bytes:
+    validate_state(state)
     state_bytes = json.dumps(state, ensure_ascii=False, indent=2).encode("utf-8")
     members: dict[str, bytes] = {
         "state.json": state_bytes,

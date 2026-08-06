@@ -6,8 +6,24 @@ from pathlib import Path
 from typing import Any
 
 
+SENSITIVE_ASSIGNMENT_NAMES = (
+    r"api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|"
+    r"app[_-]?secret|private[_-]?key|certificate[_-]?password|password|passwd|"
+    r"secret|token|cookie"
+)
+
 SENSITIVE_PATTERNS = (
-    (re.compile(r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password)\s*[:=]\s*([^\s,;]+)"), r"\1=[REDACTED]"),
+    (
+        re.compile(r"(?i)([\"']?authorization[\"']?\s*[:=]\s*)[^,;\r\n}\]]+"),
+        r"\1[REDACTED]",
+    ),
+    (
+        re.compile(
+            rf"(?i)([\"']?(?:{SENSITIVE_ASSIGNMENT_NAMES})[\"']?\s*[:=]\s*)"
+            r"[^\s,;}\]]+"
+        ),
+        r"\1[REDACTED]",
+    ),
     (re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+"), "Bearer [REDACTED]"),
     (re.compile(r"(?<!\d)(\d{4})\d{8,15}(\d{4})(?!\d)"), r"\1********\2"),
     (re.compile(r"(?<!\d)(\d{3})\d{8,11}(\d{4})(?!\d)"), r"\1********\2"),
@@ -30,6 +46,67 @@ SENSITIVE_KEYS = {
     "certificatepassword",
 }
 
+SENSITIVE_KEY_MARKERS = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "privatekey",
+    "authorization",
+    "cookie",
+    "apikey",
+)
+
+NON_SECRET_STATE_KEYS = {
+    "pagetoken",
+    "tenanttokenissued",
+}
+
+
+def is_sensitive_key(value: object) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", str(value).lower())
+    return normalized in SENSITIVE_KEYS or any(
+        marker in normalized for marker in SENSITIVE_KEY_MARKERS
+    )
+
+
+def is_sensitive_state_key(value: object) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", str(value).lower())
+    return normalized not in NON_SECRET_STATE_KEYS and is_sensitive_key(value)
+
+
+def sensitive_field_paths(value: Any) -> list[str]:
+    paths: list[str] = []
+    stack: list[tuple[str, Any]] = [("$", value)]
+    seen: set[int] = set()
+    while stack:
+        path, item = stack.pop()
+        if isinstance(item, (dict, list, tuple)):
+            identity = id(item)
+            if identity in seen:
+                continue
+            seen.add(identity)
+        if isinstance(item, dict):
+            for key, child in item.items():
+                child_path = f"{path}.{key}"
+                if is_sensitive_state_key(key):
+                    paths.append(child_path)
+                else:
+                    stack.append((child_path, child))
+        elif isinstance(item, (list, tuple)):
+            for index, child in enumerate(item):
+                stack.append((f"{path}[{index}]", child))
+    return sorted(paths)
+
+
+def assert_no_sensitive_fields(value: Any) -> None:
+    paths = sensitive_field_paths(value)
+    if not paths:
+        return
+    preview = "、".join(paths[:5])
+    suffix = f" 等 {len(paths)} 处" if len(paths) > 5 else ""
+    raise ValueError(f"状态数据不能包含密钥、令牌或密码字段：{preview}{suffix}")
+
 
 def redact_text(value: object) -> str:
     text = str(value)
@@ -47,10 +124,9 @@ def redact_data(value: Any, *, max_string: int = 4000, depth: int = 0) -> Any:
     if isinstance(value, dict):
         result: dict[str, Any] = {}
         for key, item in list(value.items())[:200]:
-            normalized = re.sub(r"[^a-z0-9]", "", str(key).lower())
             result[str(key)] = (
                 "[REDACTED]"
-                if normalized in SENSITIVE_KEYS or any(marker in normalized for marker in ("password", "secret", "token"))
+                if is_sensitive_key(key)
                 else redact_data(item, max_string=max_string, depth=depth + 1)
             )
         if len(value) > 200:
