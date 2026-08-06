@@ -16,7 +16,7 @@
 以普通用户身份打开 PowerShell，复制下面这一整行命令并回车：
 
 ```powershell
-$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/2a2d7cef5617a85672884d28eb3b5e890cc1df33/Install-Auto-Voucher-Docker.ps1'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense
+$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/d35ce23/Install-Auto-Voucher-Docker.ps1'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense
 ```
 
 这条命令会自动完成：
@@ -127,7 +127,7 @@ docker inspect --format '{{.Config.Image}}' auto-voucher
 如果端口 `8765` 已被占用，可以改用 `8877`：
 
 ```powershell
-$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/2a2d7cef5617a85672884d28eb3b5e890cc1df33/Install-Auto-Voucher-Docker.ps1'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense -Port 8877
+$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/d35ce23/Install-Auto-Voucher-Docker.ps1'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense -Port 8877
 ```
 
 然后访问 `http://127.0.0.1:8877/`。
