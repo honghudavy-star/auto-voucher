@@ -16,7 +16,9 @@ on:
       - "index.html"
       - "package.json"
       - "package-lock.json"
+      - ".npmrc"
       - "pyproject.toml"
+      - "uv.toml"
       - "vite.config.js"
   push:
     branches:
@@ -35,7 +37,9 @@ on:
       - "index.html"
       - "package.json"
       - "package-lock.json"
+      - ".npmrc"
       - "pyproject.toml"
+      - "uv.toml"
       - "vite.config.js"
   workflow_dispatch:
 
@@ -59,6 +63,7 @@ jobs:
       - name: Start Compose and wait for health
         env:
           AUTO_VOUCHER_PORT: "18765"
+          AUTO_VOUCHER_IMAGE: ghcr.io/honghudavy-star/auto-voucher:0.2.7
         run: |
           docker compose up --detach --no-build --wait --wait-timeout 120
           health="$(curl --fail --silent --show-error http://127.0.0.1:18765/api/health)"

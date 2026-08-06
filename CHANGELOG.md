@@ -6,6 +6,8 @@
 
 ### Windows Docker 一键启动
 
+- Windows 一键命令现在会在缺少 Docker 时通过中国内地加速地址下载 Docker Desktop，校验 Docker Inc. 数字签名，安装 WSL 2 后端并等待引擎启动。
+- Docker Desktop、GHCR、Docker Hub、GitHub 文件、Node.js、npm、PyPI、Python 运行时和 Debian 依赖默认切换到可用的中国内地源；不会配置已经关闭的中科大 Docker Hub 缓存。
 - 公开发布 `ghcr.io/honghudavy-star/auto-voucher:latest`，Windows 用户可以通过一条 PowerShell 命令直接拉取并启动。
 - 新增 PowerShell Docker 安装器：客户端无需 Git、Node.js 或 Python，只拉取由 `win-office` 预先构建的镜像；更新启动失败时按旧镜像 ID 自动回退，且不会删除 `auto-voucher-data` 数据卷。
 - 新增 Docker 多阶段镜像、Compose 编排和 Windows 双击启动脚本，端口仅发布到宿主机 `127.0.0.1`。

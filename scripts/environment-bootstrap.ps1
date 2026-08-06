@@ -14,11 +14,11 @@ $ErrorActionPreference = "Stop"
 $nodeVersion = "22.23.1"
 $pythonVersion = "3.12.10"
 $nodeArchiveName = "node-v$nodeVersion-win-x64.zip"
-$nodeArchiveUrl = "https://nodejs.org/dist/v$nodeVersion/$nodeArchiveName"
+$nodeArchiveUrl = "https://mirrors.ustc.edu.cn/node/v$nodeVersion/$nodeArchiveName"
 $nodeArchiveSha256 = "7df0bc9375723f4a86b3aa1b7cc73342423d9677a8df4538aca31a049e309c29"
 $uvVersion = "0.11.32"
 $uvArchiveName = "uv-x86_64-pc-windows-msvc.zip"
-$uvArchiveUrl = "https://github.com/astral-sh/uv/releases/download/$uvVersion/$uvArchiveName"
+$uvArchiveUrl = "https://files.m.daocloud.io/github.com/astral-sh/uv/releases/download/$uvVersion/$uvArchiveName"
 $uvArchiveSha256 = "acfde570451cfdb8689fa159a138ee805ba4e241c466432750302c86254b0984"
 
 $runtimeDirectory = Join-Path $Root ".auto-voucher-runtime"
@@ -223,10 +223,12 @@ function Install-LocalPython {
     $previousPythonInstallDirectory = $env:UV_PYTHON_INSTALL_DIR
     $previousPythonBinDirectory = $env:UV_PYTHON_BIN_DIR
     $previousUvCacheDirectory = $env:UV_CACHE_DIR
+    $previousPythonInstallMirror = $env:UV_PYTHON_INSTALL_MIRROR
     try {
         $env:UV_PYTHON_INSTALL_DIR = $pythonDirectory
         $env:UV_PYTHON_BIN_DIR = $pythonBinDirectory
         $env:UV_CACHE_DIR = $uvCacheDirectory
+        $env:UV_PYTHON_INSTALL_MIRROR = "https://mirrors.ustc.edu.cn/github-release/astral-sh/python-build-standalone/"
         Write-BootstrapLog "Installing managed Python $pythonVersion into the project tools directory"
         & $localUvPath python install $pythonVersion --managed-python --no-progress
         if ($LASTEXITCODE -ne 0) {
@@ -237,6 +239,7 @@ function Install-LocalPython {
         $env:UV_PYTHON_INSTALL_DIR = $previousPythonInstallDirectory
         $env:UV_PYTHON_BIN_DIR = $previousPythonBinDirectory
         $env:UV_CACHE_DIR = $previousUvCacheDirectory
+        $env:UV_PYTHON_INSTALL_MIRROR = $previousPythonInstallMirror
     }
     $result = Test-PythonPath $resolvedPython
     if ($null -eq $result) {
@@ -251,7 +254,11 @@ function Write-EnvironmentCommand {
     @(
         "@echo off",
         "set `"PATH=$nodeParent;%PATH%`"",
-        "set `"AUTO_VOUCHER_PYTHON_EXE=$($PythonInfo.Path)`""
+        "set `"AUTO_VOUCHER_PYTHON_EXE=$($PythonInfo.Path)`"",
+        "set `"NPM_CONFIG_REGISTRY=https://registry.npmmirror.com`"",
+        "set `"PIP_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/simple`"",
+        "set `"UV_DEFAULT_INDEX=https://mirrors.ustc.edu.cn/pypi/simple`"",
+        "set `"UV_PYTHON_INSTALL_MIRROR=https://mirrors.ustc.edu.cn/github-release/astral-sh/python-build-standalone/`""
     ) | Set-Content -LiteralPath $environmentCommandPath -Encoding ASCII
 }
 

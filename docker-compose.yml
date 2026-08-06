@@ -2,7 +2,7 @@ name: auto-voucher
 
 services:
   app:
-    image: ${AUTO_VOUCHER_IMAGE:-ghcr.io/honghudavy-star/auto-voucher:latest}
+    image: ${AUTO_VOUCHER_IMAGE:-ghcr.m.daocloud.io/honghudavy-star/auto-voucher:latest}
     container_name: auto-voucher
     init: true
     restart: unless-stopped

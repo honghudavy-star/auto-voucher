@@ -13,7 +13,7 @@ $headers = @{
 $localPackagePath = Join-Path $Root "package.json"
 $localPackage = Get-Content -LiteralPath $localPackagePath -Raw | ConvertFrom-Json
 $timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-$remotePackageUrl = "https://raw.githubusercontent.com/$repository/main/package.json?time=$timestamp"
+$remotePackageUrl = "https://files.m.daocloud.io/raw.githubusercontent.com/$repository/main/package.json?time=$timestamp"
 $remotePackage = Invoke-RestMethod -Uri $remotePackageUrl -Headers $headers -TimeoutSec 15
 
 $localVersion = [version]$localPackage.version
@@ -33,7 +33,7 @@ New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
 
 try {
     Invoke-WebRequest `
-        -Uri "https://github.com/$repository/archive/refs/heads/main.zip" `
+        -Uri "https://files.m.daocloud.io/github.com/$repository/archive/refs/heads/main.zip" `
         -Headers $headers `
         -OutFile $archivePath `
         -TimeoutSec 60

@@ -1,14 +1,20 @@
-FROM public.ecr.aws/docker/library/node:22.17.1-bookworm-slim AS frontend-builder
+ARG NODE_BASE_IMAGE=m.daocloud.io/docker.io/library/node:22.17.1-bookworm-slim
+ARG PYTHON_BASE_IMAGE=m.daocloud.io/docker.io/library/python:3.12.12-slim-bookworm
+
+FROM ${NODE_BASE_IMAGE} AS frontend-builder
 WORKDIR /build
-COPY package.json package-lock.json ./
+ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
+COPY package.json package-lock.json .npmrc ./
 RUN npm ci
 COPY index.html vite.config.js ./
 COPY public ./public
 COPY src ./src
 RUN npm run build
 
-FROM public.ecr.aws/docker/library/python:3.12.12-slim-bookworm AS python-builder
+FROM ${PYTHON_BASE_IMAGE} AS python-builder
 WORKDIR /build
+ENV PIP_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/simple \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 COPY pyproject.toml ./
 COPY backend ./backend
 RUN python -m pip wheel --no-cache-dir --wheel-dir /wheels ".[ocr,pdf]" \
@@ -16,10 +22,14 @@ RUN python -m pip wheel --no-cache-dir --wheel-dir /wheels ".[ocr,pdf]" \
     && python -m pip wheel --no-cache-dir --wheel-dir /wheels --no-deps \
         opencv-python-headless==4.11.0.86
 
-FROM public.ecr.aws/docker/library/python:3.12.12-slim-bookworm AS runtime
+FROM ${PYTHON_BASE_IMAGE} AS runtime
 ARG APP_VERSION=0.2.7
 
-RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=20 update \
+RUN sed -ri \
+        -e 's|https?://deb.debian.org/debian-security|https://mirrors.ustc.edu.cn/debian-security|g' \
+        -e 's|https?://deb.debian.org/debian|https://mirrors.ustc.edu.cn/debian|g' \
+        /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=20 update \
     && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=20 \
         install --yes --no-install-recommends --only-upgrade \
         libgnutls30 \

@@ -6,11 +6,15 @@ Auto Voucher 是一个开源、本地优先的财务凭证自动化工作台。�
 
 ## Windows Docker 一键启动（推荐）
 
-先安装并启动 Docker Desktop，确认使用 **Linux containers / WSL 2** 模式。然后打开 PowerShell，执行：
+打开 PowerShell，复制下面这一整行命令并回车：
 
 ```powershell
-docker run -d --pull always --name auto-voucher --restart unless-stopped -p 127.0.0.1:8765:8765 -v auto-voucher-data:/data ghcr.io/honghudavy-star/auto-voucher:latest
+$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/main/Install-Auto-Voucher-Docker.ps1?v=20260805'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense
 ```
+
+如果电脑没有 Docker，该命令会从中国内地加速地址下载 Docker Desktop，校验 Docker Inc. 数字签名后自动安装并启动；如果已经安装，则直接拉取并启动 Auto Voucher。首次启用 WSL 2 时 Windows 可能要求重启，重启后再执行同一条命令即可。
+
+执行包含 `-AcceptDockerLicense` 的命令，表示你已阅读并接受 [Docker Desktop Subscription Service Agreement](https://www.docker.com/legal/docker-subscription-service-agreement/)。不接受时请不要执行，可先自行安装兼容的 Docker 环境。
 
 启动成功后访问：
 
@@ -18,7 +22,9 @@ docker run -d --pull always --name auto-voucher --restart unless-stopped -p 127.
 http://127.0.0.1:8765/
 ```
 
-该命令会自动拉取公开的 `latest` 镜像并保存数据到 `auto-voucher-data`。不需要安装 Git、Node.js 或 Python，也不会在用户电脑上构建镜像。更新、停止、卸载和故障排查请参阅 [Windows Docker 一键启动指南](docs/Windows-Docker一键启动.md)。
+该命令会通过中国内地加速地址拉取公开的 `latest` 镜像，并把数据保存到 `auto-voucher-data`。不需要安装 Git、Node.js 或 Python，也不会在用户电脑上构建镜像。更新、停止、卸载和故障排查请参阅 [Windows Docker 一键启动指南](docs/Windows-Docker一键启动.md)。
+
+项目默认使用中国内地下载源：中科大 Node.js、PyPI、Python 运行时与 Debian 镜像，npmmirror npm 源，以及 DaoCloud 的 Docker Desktop、GHCR、Docker Hub 和 GitHub 文件加速。中科大 Docker Hub 镜像已经关闭，因此项目不会写入失效的 `docker.mirrors.ustc.edu.cn` 配置。
 
 ## Windows 源码运行
 
@@ -89,7 +95,7 @@ npm run check
 OCR 和 PDF 识别是可选组件：
 
 ```bash
-python3 -m pip install -e ".[ocr,pdf]"
+python3 -m pip install --index-url https://mirrors.ustc.edu.cn/pypi/simple -e ".[ocr,pdf]"
 ```
 
 ## 项目结构

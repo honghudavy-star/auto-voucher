@@ -1,0 +1,5 @@
+python-install-mirror = "https://mirrors.ustc.edu.cn/github-release/astral-sh/python-build-standalone/"
+
+[[index]]
+url = "https://mirrors.ustc.edu.cn/pypi/simple"
+default = true

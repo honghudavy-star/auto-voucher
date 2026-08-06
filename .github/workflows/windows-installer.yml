@@ -48,7 +48,7 @@ jobs:
         run: |
           $version = "8.30.1"
           $archive = Join-Path $env:RUNNER_TEMP "gitleaks-$version-windows-x64.zip"
-          $download = "https://github.com/gitleaks/gitleaks/releases/download/v$version/gitleaks_${version}_windows_x64.zip"
+          $download = "https://files.m.daocloud.io/github.com/gitleaks/gitleaks/releases/download/v$version/gitleaks_${version}_windows_x64.zip"
           Invoke-WebRequest -UseBasicParsing $download -OutFile $archive
           $expected = "d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e"
           $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -72,7 +72,7 @@ jobs:
       - run: npm ci
       - name: Install locked Python release environment
         run: |
-          python -m pip install --upgrade pip==26.1.2 uv==0.10.11
+          python -m pip install --index-url https://mirrors.ustc.edu.cn/pypi/simple --upgrade pip==26.1.2 uv==0.10.11
           uv sync --frozen --group release
       - run: npm test
       - name: Test backend against locked environment
