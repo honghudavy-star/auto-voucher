@@ -13,7 +13,7 @@ Windows 首次使用分成两个一键步骤。第一步只准备 Docker 环境�
 以普通用户身份打开 PowerShell，复制下面这一整行命令并回车：
 
 ```powershell
-$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/d35ce23/Install-Auto-Voucher-Docker.ps1'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense -DockerOnly
+$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/bfba1d9/Install-Auto-Voucher-Docker.ps1'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense -DockerOnly
 ```
 
 这一步会：
@@ -32,7 +32,7 @@ $ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercon
 确认第一步显示 Docker 已就绪后，再复制下面这一整行命令并回车：
 
 ```powershell
-$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/d35ce23/Install-Auto-Voucher-Docker.ps1'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense
+$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/bfba1d9/Install-Auto-Voucher-Docker.ps1'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense
 ```
 
 这一步才会拉取公开的 `latest` 镜像、创建或更新 `auto-voucher` 容器，并保留 `auto-voucher-data` 数据卷。完成后访问：

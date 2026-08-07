@@ -16,7 +16,7 @@
 以普通用户身份打开 PowerShell，复制下面这一整行命令并回车：
 
 ```powershell
-$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/d35ce23/Install-Auto-Voucher-Docker.ps1'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense -DockerOnly
+$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/bfba1d9/Install-Auto-Voucher-Docker.ps1'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense -DockerOnly
 ```
 
 第一步只做 Docker 环境准备：
@@ -43,7 +43,7 @@ docker version
 确认第一步显示 Docker 已就绪后，再复制下面这一整行命令并回车：
 
 ```powershell
-$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/d35ce23/Install-Auto-Voucher-Docker.ps1'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense
+$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/bfba1d9/Install-Auto-Voucher-Docker.ps1'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense
 ```
 
 第二步才会从中国内地 GHCR 加速地址拉取公开的 Auto Voucher `latest` 镜像、创建或更新程序容器，同时保留 `auto-voucher-data` 数据卷，并等待健康检查通过后打开浏览器。
@@ -135,7 +135,7 @@ docker inspect --format '{{.Config.Image}}' auto-voucher
 如果端口 `8765` 已被占用，可以改用 `8877`：
 
 ```powershell
-$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/d35ce23/Install-Auto-Voucher-Docker.ps1'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense -Port 8877
+$ErrorActionPreference='Stop'; $u='https://files.m.daocloud.io/raw.githubusercontent.com/honghudavy-star/auto-voucher/bfba1d9/Install-Auto-Voucher-Docker.ps1'; $p=Join-Path $env:TEMP 'Install-Auto-Voucher-Docker.ps1'; Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -AcceptDockerLicense -Port 8877
 ```
 
 然后访问 `http://127.0.0.1:8877/`。

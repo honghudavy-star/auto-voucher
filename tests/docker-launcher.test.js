@@ -116,7 +116,7 @@ test("Windows Docker documentation separates Docker readiness from app installat
     readFile(windowsDockerGuidePath, "utf8"),
   ]);
 
-  assert.match(readme, /d35ce23\/Install-Auto-Voucher-Docker\.ps1/);
+  assert.match(readme, /bfba1d9\/Install-Auto-Voucher-Docker\.ps1/);
   assert.match(readme, /-AcceptDockerLicense/);
   assert.match(readme, /-DockerOnly/);
   assert.match(readme, /第一步：一键安装 Docker Desktop 并验证 WSL 2/);
@@ -125,7 +125,7 @@ test("Windows Docker documentation separates Docker readiness from app installat
   assert.doesNotMatch(readme, /docker compose up[^\n]*--build/i);
   assert.doesNotMatch(readme, /ghcr\.io\/honghudavy-star\/auto-voucher:0\.2\.7/);
 
-  assert.match(guide, /d35ce23\/Install-Auto-Voucher-Docker\.ps1/);
+  assert.match(guide, /bfba1d9\/Install-Auto-Voucher-Docker\.ps1/);
   assert.match(guide, /-AcceptDockerLicense/);
   assert.match(guide, /-DockerOnly/);
   assert.match(guide, /第一步：一键安装 Docker Desktop 并验证 WSL 2/);
