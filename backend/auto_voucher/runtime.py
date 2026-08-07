@@ -129,7 +129,7 @@ class EnvironmentService:
             (
                 "无需操作。"
                 if is_windows
-                else "当前为本地开发运行；Windows 正式版的安装和更新由轻量启动器负责。"
+                else "当前为本地开发运行；Windows 正式版通过 Docker Desktop 安装和更新。"
             ),
             blocking=not supported_runtime,
         ))
@@ -180,7 +180,7 @@ class EnvironmentService:
             "passed" if static_ok else "failed",
             str(self.static_dir / "index.html"),
             "核心静态资源完整",
-            "通过启动器重新下载当前版本。",
+            "重新执行 Docker 启动命令以恢复核心镜像。",
             blocking=not static_ok,
         ))
 
@@ -279,7 +279,6 @@ class EnvironmentService:
                 {"id": "clear-update-cache", "label": "清理未完成下载"},
                 {"id": "clear-staging", "label": "清理安装暂存区"},
                 {"id": "select-port", "label": "重新选择本地端口"},
-                {"id": "recreate-shortcut", "label": "重新创建桌面入口", "launcherRequired": True},
             ],
         }
         fingerprint_payload = {
@@ -351,8 +350,6 @@ class EnvironmentService:
             recommended = self._find_available_port()
             self.store.update(recommendedPort=recommended)
             return {"ok": True, "action": action, "restartRequired": True, "recommendedPort": recommended}
-        elif action == "recreate-shortcut":
-            return {"ok": False, "action": action, "launcherRequired": True}
         else:
             raise ValueError("不允许执行该环境修复动作")
         return {"ok": True, "action": action, "environment": self.check(include_network=False)}
@@ -390,8 +387,8 @@ class EnvironmentService:
     def _network_checks(self, include_network: bool) -> list[dict[str, Any]]:
         manifest_url = os.environ.get("AUTO_VOUCHER_UPDATE_MANIFEST_URL", "").strip()
         if not manifest_url:
-            # Local development does not use the signed Windows update stream.
-            # Launcher status owns user-facing update availability in releases.
+            # Local development does not use the signed Docker update stream.
+            # Docker status owns user-facing update availability in releases.
             return []
         if not manifest_url.startswith("https://"):
             return [self._result(
@@ -577,7 +574,7 @@ class EnvironmentService:
 
 
 class LauncherClient:
-    """Authenticated loopback client for the native launcher's update control API."""
+    """Authenticated loopback client for Docker update control when provided."""
 
     def __init__(self, store: RuntimeStore) -> None:
         self.store = store
@@ -590,7 +587,7 @@ class LauncherClient:
             return saved if isinstance(saved, dict) else {
                 "available": False,
                 "status": "launcher_unavailable",
-                "message": "当前开发运行未连接轻量启动器",
+                "message": "当前运行未连接 Docker 更新控制；请重新执行 Docker 启动命令",
                 "currentVersion": app_version(),
                 "channel": "stable",
                 "progress": 0,
@@ -610,11 +607,11 @@ class LauncherClient:
             }
 
     def command(self, action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        allowed = {"check", "download", "apply", "postpone", "recreate-shortcut"}
+        allowed = {"check", "download", "apply", "postpone"}
         if action not in allowed:
-            raise ValueError("不允许执行该启动器操作")
+            raise ValueError("不允许执行该 Docker 更新操作")
         if not self.endpoint or not self.token:
-            raise ValueError("当前运行未连接轻量启动器，无法执行更新操作")
+            raise ValueError("当前运行未连接 Docker 更新控制，请重新执行 Docker 启动命令")
         result = self._request("POST", f"/v1/update/{action}", payload or {})
         self.store.update(update=redact_data(result))
         return result
@@ -648,7 +645,7 @@ class LauncherClient:
             with urllib.request.urlopen(request, timeout=10) as response:
                 result = json.load(response)
         except (OSError, urllib.error.URLError, ValueError) as exc:
-            raise ValueError(f"启动器通信失败：{exc}") from exc
+            raise ValueError(f"Docker 更新通信失败：{exc}") from exc
         if not isinstance(result, dict):
-            raise ValueError("启动器返回了无效响应")
+            raise ValueError("Docker 更新服务返回了无效响应")
         return result

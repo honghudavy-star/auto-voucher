@@ -338,13 +338,13 @@ class DiagnosticLogger:
             f"支持编号：{support_code}",
             f"生成时间：{utc_now()}",
             f"程序版本：{app_version()}",
-            f"启动器版本：{runtime.get('launcherVersion') or '未连接'}",
+            f"Docker 运行版本：{runtime.get('launcherVersion') or '未连接'}",
             "内置能力：OCR、PDF（随应用版本提供）",
             f"系统：{platform.system()} {platform.release()} {platform.machine()}",
             f"本地服务：{'运行中' if runtime.get('serviceHealthy') else '异常'}",
             f"数据库状态：{runtime.get('databaseStatus') or '未知'}",
             f"环境检测：{environment.get('overallStatus') or '未检测'}",
-            f"最近更新：{update.get('status') or '未连接启动器'}",
+            f"最近更新：{update.get('status') or '未连接 Docker 更新控制'}",
         ]
         if failed_checks:
             lines.append("需要处理的环境问题：")

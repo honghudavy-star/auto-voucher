@@ -11,8 +11,6 @@ const readmePath = new URL("../README.md", import.meta.url);
 const windowsDockerGuidePath = new URL("../docs/Windows-Docker一键启动.md", import.meta.url);
 const npmConfigPath = new URL("../.npmrc", import.meta.url);
 const uvConfigPath = new URL("../uv.toml", import.meta.url);
-const environmentBootstrapPath = new URL("../scripts/environment-bootstrap.ps1", import.meta.url);
-const sourceUpdaterPath = new URL("../scripts/source-update.ps1", import.meta.url);
 
 test("Docker launcher keeps Windows startup local, persistent, and health-gated", async () => {
   const [dockerfile, compose, batch, powershell] = await Promise.all([
@@ -132,20 +130,16 @@ test("Windows Docker documentation uses one command and mainland acceleration wi
 });
 
 test("project download sources default to active mainland mirrors", async () => {
-  const [npmConfig, uvConfig, bootstrap, updater] = await Promise.all([
+  const [npmConfig, uvConfig, dockerfile] = await Promise.all([
     readFile(npmConfigPath, "utf8"),
     readFile(uvConfigPath, "utf8"),
-    readFile(environmentBootstrapPath, "utf8"),
-    readFile(sourceUpdaterPath, "utf8"),
+    readFile(dockerfilePath, "utf8"),
   ]);
 
   assert.match(npmConfig, /registry=https:\/\/registry\.npmmirror\.com/);
   assert.match(uvConfig, /https:\/\/mirrors\.ustc\.edu\.cn\/pypi\/simple/);
   assert.match(uvConfig, /python-build-standalone/);
-  assert.match(bootstrap, /https:\/\/mirrors\.ustc\.edu\.cn\/node\//);
-  assert.match(bootstrap, /files\.m\.daocloud\.io\/github\.com\/astral-sh\/uv/);
-  assert.match(bootstrap, /UV_PYTHON_INSTALL_MIRROR/);
-  assert.match(updater, /files\.m\.daocloud\.io\/raw\.githubusercontent\.com/);
-  assert.match(updater, /files\.m\.daocloud\.io\/github\.com/);
-  assert.doesNotMatch(bootstrap + updater, /docker\.mirrors\.ustc\.edu\.cn/);
+  assert.match(dockerfile, /m\.daocloud\.io\/docker\.io\/library\/node:/);
+  assert.match(dockerfile, /m\.daocloud\.io\/docker\.io\/library\/python:/);
+  assert.doesNotMatch(dockerfile, /docker\.mirrors\.ustc\.edu\.cn/);
 });

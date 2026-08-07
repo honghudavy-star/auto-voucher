@@ -235,7 +235,7 @@ class RuntimeTests(unittest.TestCase):
             status = client.status()
             self.assertFalse(status["available"])
             self.assertEqual(status["status"], "launcher_unavailable")
-            with self.assertRaisesRegex(ValueError, "未连接轻量启动器"):
+            with self.assertRaisesRegex(ValueError, "未连接 Docker 更新控制"):
                 client.command("check")
 
     def test_development_without_update_manifest_has_no_user_warning(self):

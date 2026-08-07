@@ -7,15 +7,11 @@ const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8
 const workflowIconSource = readFileSync(new URL("../src/workflow-icons.js", import.meta.url), "utf8");
 const viteConfig = readFileSync(new URL("../vite.config.js", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-const workflow = readFileSync(
-  new URL("../.github/workflows/windows-installer.yml", import.meta.url),
-  "utf8",
-);
 
 test("environment UI treats OCR and PDF as bundled capabilities", () => {
   assert.equal(source.includes('data-repair-environment="reinstall-ocr"'), false);
   assert.equal(source.includes('data-repair-environment="reinstall-pdf"'), false);
-  assert.equal(source.includes('data-repair-environment="recreate-shortcut"'), true);
+  assert.equal(source.includes('data-repair-environment="recreate-shortcut"'), false);
 });
 
 test("environment and update details live behind the page status control", () => {
@@ -36,7 +32,7 @@ test("environment and update details live behind the page status control", () =>
   assert.match(source, /配置进度、运行环境和程序版本集中显示在这里/);
   assert.doesNotMatch(source, /阻断项未解决时不能启用生产/);
   assert.doesNotMatch(source, /Cloudflare R2|CDN 版本清单/);
-  assert.match(source, /launcher_unavailable: "开发运行"/);
+  assert.match(source, /launcher_unavailable: "Docker 更新"/);
 });
 
 test("focused import, canvas, approval source, and approval processing pages hide the global search bar", () => {
@@ -740,13 +736,4 @@ test("master data uses a filtered paginated semantic table", () => {
   assert.doesNotMatch(source, /条匹配记录/);
   assert.doesNotMatch(source, /class="account-master-head"/);
   assert.doesNotMatch(source, /class="account-master-list"/);
-});
-
-test("Windows release publishes one stable complete application bundle", () => {
-  assert.match(workflow, /AutoVoucherApp-\$\{\{ steps\.release\.outputs\.version \}\}-windows-x64\.zip/);
-  assert.match(workflow, /group:\s+auto-voucher-windows-stable/);
-  assert.doesNotMatch(workflow, /AutoVoucherCore-\$\{\{ steps\.release\.outputs\.version \}\}-windows-x64\.zip/);
-  assert.doesNotMatch(workflow, /AutoVoucherOCR-\$\{\{ steps\.release\.outputs\.version \}\}-windows-x64\.zip/);
-  assert.doesNotMatch(workflow, /AutoVoucherPDF-\$\{\{ steps\.release\.outputs\.version \}\}-windows-x64\.zip/);
-  assert.doesNotMatch(workflow, /rollout_percentage:/);
 });

@@ -493,10 +493,7 @@ def make_handler(
                 elif path == "/api/environment/repair":
                     payload = self.read_json()
                     action = str(payload.get("action") or "")
-                    if action == "recreate-shortcut":
-                        self.json_response(launcher_client.command(action))
-                    else:
-                        self.json_response(environment_service.repair(action))
+                    self.json_response(environment_service.repair(action))
                 elif path == "/api/update/check":
                     self.read_json()
                     self.json_response(launcher_client.command("check"))

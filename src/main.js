@@ -805,7 +805,6 @@ function environmentCard({ compact = false } = {}) {
         ${!compact || issues.some((item) => ["disk-space", "core-assets"].includes(item.id))
           ? `<button class="text-button" data-repair-environment="clear-update-cache">清理旧版本和下载缓存</button>`
           : ""}
-        ${compact ? "" : `<button class="text-button" data-repair-environment="recreate-shortcut" ${updateStatus.available ? "" : "disabled"}>重建桌面入口</button>`}
       </div>
       <small>支持编号 ${escapeHtml(environmentStatus.supportCode || "尚未生成")}</small>
     </section>
@@ -814,7 +813,7 @@ function environmentCard({ compact = false } = {}) {
 
 function updateCard() {
   const statusLabels = {
-    launcher_unavailable: "开发运行",
+    launcher_unavailable: "Docker 更新",
     idle: "已是最新版本",
     available: "发现新版本",
     security_required: "需要安全更新",
@@ -837,8 +836,8 @@ function updateCard() {
       ${updateStatus.releaseNotes
         ? `<p>${escapeHtml(updateStatus.releaseNotes)}</p>`
         : `<p>${escapeHtml(status === "launcher_unavailable"
-          ? "当前为本地开发运行；正式版通过 Windows 启动器检查和安装更新。"
-          : updateStatus.message || "启动器负责校验、下载、版本切换和失败回退。")}</p>`}
+          ? "Docker 用户请重新执行 Windows Docker 一键启动命令更新镜像。"
+          : updateStatus.message || "重新执行 Docker 一键启动命令后，系统会拉取新镜像并通过健康检查。")}</p>`}
       ${runtimeStatus.restartBlockers?.length ? `<div class="privacy-note warning">${icon("alert")}${runtimeStatus.restartBlockers.map(escapeHtml).join("；")}</div>` : ""}
       <div class="card-actions">
         <button class="secondary-button" data-update-action="check" ${!updateStatus.available ? "disabled" : ""}>${icon("refresh")}检查更新</button>
@@ -4011,7 +4010,7 @@ const diagnosticCategoryLabels = {
   security: "安全控制",
   environment: "环境检测",
   update: "版本更新",
-  launcher: "轻量启动器",
+  launcher: "Docker 运行",
 };
 
 const diagnosticLevelLabels = {

@@ -22,12 +22,6 @@ pdf = [
   "pypdfium2==4.30.0",
 ]
 
-[dependency-groups]
-release = [
-  "pip-audit==2.10.1",
-  "pyinstaller==6.21.0",
-]
-
 [project.scripts]
 auto-voucher = "auto_voucher.server:main"
 
