@@ -10,6 +10,7 @@
 - Docker Desktop、GHCR、Docker Hub、GitHub 文件、Node.js、npm、PyPI、Python 运行时和 Debian 依赖默认切换到可用的中国内地源；不会配置已经关闭的中科大 Docker Hub 缓存。
 - 公开发布 `ghcr.io/honghudavy-star/auto-voucher:latest`，Windows 用户可以通过一条 PowerShell 命令直接拉取并启动。
 - 新增 PowerShell Docker 安装器：客户端无需 Git、Node.js 或 Python，只拉取由 `win-office` 预先构建的镜像；更新启动失败时按旧镜像 ID 自动回退，且不会删除 `auto-voucher-data` 数据卷。
+- Windows 首次安装拆成两步：先单独准备并验证 Docker Desktop/WSL 2，再拉取并启动 Auto Voucher，避免把基础环境失败和项目启动失败混在一起。
 - 新增 Docker 多阶段镜像、Compose 编排和 Windows 双击启动脚本，端口仅发布到宿主机 `127.0.0.1`。
 - SQLite、归档和诊断数据保存在 `auto-voucher-data` 命名卷，重建容器不会删除业务数据。
 - 镜像包含 OCR/PDF 组件，以非 root 用户运行，并配置健康检查、自动重启、日志轮转和资源上限。

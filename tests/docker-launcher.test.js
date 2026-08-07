@@ -55,6 +55,14 @@ test("Windows installer only pulls the prebuilt image and preserves Docker data 
   assert.match(installer, /files\.m\.daocloud\.io\/desktop\.docker\.com/);
   assert.match(installer, /Get-AuthenticodeSignature/);
   assert.match(installer, /Signature\.Status -ne "Valid"/);
+  assert.match(installer, /function Ensure-WslReady/);
+  assert.match(installer, /--install/);
+  assert.match(installer, /--no-distribution/);
+  assert.match(installer, /-Verb RunAs/);
+  assert.match(installer, /WSL 2 was enabled/);
+  assert.match(installer, /\[switch\]\$DockerOnly/);
+  assert.match(installer, /if \(\$DockerOnly\)/);
+  assert.match(installer, /Docker Desktop and WSL 2 are ready/);
   assert.match(installer, /"--accept-license"/);
   assert.match(installer, /"--backend=wsl-2"/);
   assert.match(installer, /Invoke-Docker -Arguments @\("pull", \$SelectedImage\)/);
@@ -102,7 +110,7 @@ test("Windows Docker probe treats a stopped daemon as a boolean failure", async 
   assert.match(result.stdout, /probe-result=false/);
 });
 
-test("Windows Docker documentation uses one command and mainland acceleration without local builds", async () => {
+test("Windows Docker documentation separates Docker readiness from app installation", async () => {
   const [readme, guide] = await Promise.all([
     readFile(readmePath, "utf8"),
     readFile(windowsDockerGuidePath, "utf8"),
@@ -110,16 +118,22 @@ test("Windows Docker documentation uses one command and mainland acceleration wi
 
   assert.match(readme, /d35ce23\/Install-Auto-Voucher-Docker\.ps1/);
   assert.match(readme, /-AcceptDockerLicense/);
+  assert.match(readme, /-DockerOnly/);
+  assert.match(readme, /第一步：一键安装 Docker Desktop 并验证 WSL 2/);
+  assert.match(readme, /第二步：一键安装并启动 Auto Voucher/);
   assert.match(readme, /files\.m\.daocloud\.io/);
   assert.doesNotMatch(readme, /docker compose up[^\n]*--build/i);
   assert.doesNotMatch(readme, /ghcr\.io\/honghudavy-star\/auto-voucher:0\.2\.7/);
 
   assert.match(guide, /d35ce23\/Install-Auto-Voucher-Docker\.ps1/);
   assert.match(guide, /-AcceptDockerLicense/);
+  assert.match(guide, /-DockerOnly/);
+  assert.match(guide, /第一步：一键安装 Docker Desktop 并验证 WSL 2/);
+  assert.match(guide, /第二步：一键安装并启动 Auto Voucher/);
   assert.match(guide, /ghcr\.m\.daocloud\.io\/honghudavy-star\/auto-voucher:latest/);
   assert.match(guide, /中科大 Docker Hub 缓存也已经关闭/);
-  assert.match(guide, /首次运行时，如果本机没有 Docker/);
-  assert.match(guide, /后续运行同一条命令时，脚本会重新拉取 `latest` 镜像/);
+  assert.match(guide, /第一步的 Docker Desktop\/WSL 2 准备/);
+  assert.match(guide, /重新执行本页“第二步”的整行命令/);
   assert.match(guide, /新容器未通过健康检查，脚本会自动用旧镜像回滚/);
   assert.match(guide, /保留 `auto-voucher-data` 数据卷/);
   assert.doesNotMatch(guide, /docker compose up[^\n]*--build/i);

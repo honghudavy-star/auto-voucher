@@ -5,6 +5,7 @@ param(
     [ValidateRange(1, 65535)]
     [int]$Port = 8765,
     [switch]$AcceptDockerLicense,
+    [switch]$DockerOnly,
     [switch]$AllowOverseasFallback,
     [switch]$NoBrowser
 )
@@ -16,6 +17,61 @@ $CanonicalImage = "ghcr.io/honghudavy-star/auto-voucher:latest"
 $DockerDesktopUrl = "https://files.m.daocloud.io/desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe"
 $AppUrl = "http://127.0.0.1:$Port/"
 $script:DockerCommand = $null
+
+function Resolve-WslCommand {
+    $Command = Get-Command wsl.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $Command) {
+        return $Command.Source
+    }
+
+    $Candidate = Join-Path $env:SystemRoot "System32\wsl.exe"
+    if (Test-Path -LiteralPath $Candidate -PathType Leaf) {
+        return $Candidate
+    }
+    return $null
+}
+
+function Test-WslReady {
+    $WslCommand = Resolve-WslCommand
+    if ([string]::IsNullOrWhiteSpace($WslCommand)) {
+        return $false
+    }
+
+    $ProbeErrorActionPreference = $ErrorActionPreference
+    $ProbeExitCode = 1
+    try {
+        $ErrorActionPreference = "Continue"
+        & $WslCommand --status 2>$null | Out-Null
+        $ProbeExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $ProbeErrorActionPreference
+    }
+    return $ProbeExitCode -eq 0
+}
+
+function Ensure-WslReady {
+    if (Test-WslReady) {
+        return
+    }
+
+    $WslCommand = Resolve-WslCommand
+    if ([string]::IsNullOrWhiteSpace($WslCommand)) {
+        throw "Windows WSL is unavailable. Run Windows Update and try the same command again."
+    }
+
+    Write-Host "[Auto Voucher] WSL 2 is not ready. Requesting administrator permission to enable it..." -ForegroundColor Cyan
+    $Process = Start-Process -FilePath $WslCommand -ArgumentList @(
+        "--install",
+        "--no-distribution"
+    ) -Verb RunAs -Wait -PassThru
+    if ($Process.ExitCode -ne 0) {
+        throw "WSL 2 could not be enabled (exit code $($Process.ExitCode)). Approve the administrator prompt and try again."
+    }
+    if (-not (Test-WslReady)) {
+        throw "WSL 2 was enabled. Restart Windows, then run the same one-line command again."
+    }
+}
 
 function Resolve-DockerCommand {
     $Command = Get-Command docker.exe -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -190,6 +246,10 @@ try {
 
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $script:DockerCommand = Resolve-DockerCommand
+    if ([string]::IsNullOrWhiteSpace($script:DockerCommand) -and -not $AcceptDockerLicense) {
+        throw "Docker Desktop is missing. Run the documented one-line command, which includes -AcceptDockerLicense after you review the Docker Desktop Subscription Service Agreement."
+    }
+    Ensure-WslReady
     if ([string]::IsNullOrWhiteSpace($script:DockerCommand)) {
         Install-DockerDesktop
     }
@@ -202,6 +262,13 @@ try {
         if (-not (Wait-DockerServer)) {
             throw "Docker Desktop did not become ready. If WSL 2 was just enabled, restart Windows and run the same one-line command again."
         }
+    }
+
+    if ($DockerOnly) {
+        Write-Host ""
+        Write-Host "Docker Desktop and WSL 2 are ready." -ForegroundColor Green
+        Write-Host "Run this script again without -DockerOnly to install Auto Voucher."
+        exit 0
     }
 
     Write-Host "[Auto Voucher] Pulling prebuilt image from the mainland accelerator: $SelectedImage" -ForegroundColor Cyan
