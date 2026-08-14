@@ -191,32 +191,28 @@ test("Windows installer automatically falls back from DaoCloud to canonical GHCR
   assert.match(result.stdout, /fallback-result=canonical-ghcr/);
 });
 
-test("Windows Docker documentation separates Docker readiness from app installation", async () => {
+test("Windows Docker documentation uses the short verified installer entrypoint", async () => {
   const [readme, guide] = await Promise.all([
     readFile(readmePath, "utf8"),
     readFile(windowsDockerGuidePath, "utf8"),
   ]);
 
-  assert.match(readme, /bfba1d9\/Install-Auto-Voucher-Docker\.ps1/);
-  assert.match(readme, /-AcceptDockerLicense/);
-  assert.match(readme, /-DockerOnly/);
-  assert.match(readme, /-AcceptDockerLicense -AllowOverseasFallback/);
-  assert.match(readme, /第一步：一键安装 Docker Desktop 并验证 WSL 2/);
-  assert.match(readme, /第二步：一键安装并启动 Auto Voucher/);
-  assert.match(readme, /files\.m\.daocloud\.io/);
+  assert.match(readme, /irm https:\/\/finance\.iagent7\.com\/install\.ps1 \| iex/);
+  assert.match(readme, /irm https:\/\/finance\.iagent7\.com\/install\.ps1 \| more/);
+  assert.match(readme, /SHA-256/);
+  assert.doesNotMatch(readme, /bfba1d9\/Install-Auto-Voucher-Docker\.ps1/);
+  assert.doesNotMatch(readme, /\$ErrorActionPreference='Stop'; \$u=/);
   assert.doesNotMatch(readme, /docker compose up[^\n]*--build/i);
   assert.doesNotMatch(readme, /ghcr\.io\/honghudavy-star\/auto-voucher:0\.2\.7/);
 
-  assert.match(guide, /bfba1d9\/Install-Auto-Voucher-Docker\.ps1/);
-  assert.match(guide, /-AcceptDockerLicense/);
-  assert.match(guide, /-DockerOnly/);
-  assert.match(guide, /-AcceptDockerLicense -AllowOverseasFallback/);
-  assert.match(guide, /第一步：一键安装 Docker Desktop 并验证 WSL 2/);
-  assert.match(guide, /第二步：一键安装并启动 Auto Voucher/);
+  assert.match(guide, /irm https:\/\/finance\.iagent7\.com\/install\.ps1 \| iex/);
+  assert.match(guide, /irm https:\/\/finance\.iagent7\.com\/install\.ps1 \| more/);
+  assert.match(guide, /SHA-256/);
+  assert.doesNotMatch(guide, /bfba1d9\/Install-Auto-Voucher-Docker\.ps1/);
+  assert.doesNotMatch(guide, /\$ErrorActionPreference='Stop'; \$u=/);
   assert.match(guide, /ghcr\.m\.daocloud\.io\/honghudavy-star\/auto-voucher:latest/);
   assert.match(guide, /中科大 Docker Hub 缓存也已经关闭/);
-  assert.match(guide, /第一步的 Docker Desktop\/WSL 2 准备/);
-  assert.match(guide, /重新执行本页“第二步”的整行命令/);
+  assert.match(guide, /重新执行同一条短命令/);
   assert.match(guide, /新容器未通过健康检查，脚本会自动用旧镜像回滚/);
   assert.match(guide, /保留 `auto-voucher-data` 数据卷/);
   assert.doesNotMatch(guide, /docker compose up[^\n]*--build/i);
