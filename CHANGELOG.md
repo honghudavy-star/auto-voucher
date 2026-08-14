@@ -6,6 +6,8 @@
 
 ### Windows Docker 一键启动
 
+- 修复 DaoCloud GHCR 加速对白名单外仓库拒绝或镜像层不可用时安装直接终止的问题；默认镜像现在会自动回退到官方 GHCR，自定义镜像仍保持 fail-closed。
+- Docker Desktop 缺失时改为在安装器内展示许可协议并要求输入 `YES`，不再要求用户在一键命令中拼接许可参数。
 - Windows 一键命令现在会在缺少 Docker 时通过中国内地加速地址下载 Docker Desktop，校验 Docker Inc. 数字签名，安装 WSL 2 后端并等待引擎启动。
 - Docker Desktop、GHCR、Docker Hub、GitHub 文件、Node.js、npm、PyPI、Python 运行时和 Debian 依赖默认切换到可用的中国内地源；不会配置已经关闭的中科大 Docker Hub 缓存。
 - 公开发布 `ghcr.io/honghudavy-star/auto-voucher:latest`，Windows 用户可以通过一条 PowerShell 命令直接拉取并启动。

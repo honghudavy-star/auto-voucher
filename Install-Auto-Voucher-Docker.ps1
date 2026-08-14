@@ -6,6 +6,8 @@ param(
     [int]$Port = 8765,
     [switch]$AcceptDockerLicense,
     [switch]$DockerOnly,
+    # Kept for compatibility with commands copied from older documentation.
+    # The default DaoCloud image now falls back automatically.
     [switch]$AllowOverseasFallback,
     [switch]$NoBrowser
 )
@@ -151,6 +153,20 @@ function Start-DockerDesktop {
     return $true
 }
 
+function Confirm-DockerDesktopLicense {
+    if ($AcceptDockerLicense) {
+        return
+    }
+
+    Write-Host "Docker Desktop is required and is governed by the Docker Desktop Subscription Service Agreement." -ForegroundColor Yellow
+    Write-Host "Review: https://www.docker.com/legal/docker-subscription-service-agreement/"
+    $Consent = Read-Host "Type YES to accept and continue"
+    if ($Consent -cne "YES") {
+        throw "Docker Desktop license was not accepted. No Docker installation was started."
+    }
+    $script:AcceptDockerLicense = $true
+}
+
 function Install-DockerDesktop {
     if (-not $AcceptDockerLicense) {
         throw "Docker Desktop is missing. Run the documented one-line command, which includes -AcceptDockerLicense after you review the Docker Desktop Subscription Service Agreement."
@@ -202,6 +218,25 @@ function Invoke-Docker {
     }
 }
 
+function Pull-AutoVoucherImage {
+    param([Parameter(Mandatory = $true)][string]$SelectedImage)
+
+    Write-Host "[Auto Voucher] Pulling prebuilt image: $SelectedImage" -ForegroundColor Cyan
+    try {
+        Invoke-Docker -Arguments @("pull", $SelectedImage)
+        return $SelectedImage
+    }
+    catch {
+        if ($SelectedImage -ne "ghcr.m.daocloud.io/honghudavy-star/auto-voucher:latest") {
+            throw
+        }
+        $SelectedImage = $CanonicalImage
+        Write-Host "[Auto Voucher] Mainland accelerator failed. Trying canonical GHCR automatically: $SelectedImage" -ForegroundColor Yellow
+        Invoke-Docker -Arguments @("pull", $SelectedImage)
+        return $SelectedImage
+    }
+}
+
 function Start-AutoVoucherContainer {
     param([Parameter(Mandatory = $true)][string]$SelectedImage)
 
@@ -246,8 +281,8 @@ try {
 
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $script:DockerCommand = Resolve-DockerCommand
-    if ([string]::IsNullOrWhiteSpace($script:DockerCommand) -and -not $AcceptDockerLicense) {
-        throw "Docker Desktop is missing. Run the documented one-line command, which includes -AcceptDockerLicense after you review the Docker Desktop Subscription Service Agreement."
+    if ([string]::IsNullOrWhiteSpace($script:DockerCommand)) {
+        Confirm-DockerDesktopLicense
     }
     Ensure-WslReady
     if ([string]::IsNullOrWhiteSpace($script:DockerCommand)) {
@@ -271,18 +306,7 @@ try {
         exit 0
     }
 
-    Write-Host "[Auto Voucher] Pulling prebuilt image from the mainland accelerator: $SelectedImage" -ForegroundColor Cyan
-    try {
-        Invoke-Docker -Arguments @("pull", $SelectedImage)
-    }
-    catch {
-        if (-not $AllowOverseasFallback -or $SelectedImage -ne "ghcr.m.daocloud.io/honghudavy-star/auto-voucher:latest") {
-            throw
-        }
-        $SelectedImage = $CanonicalImage
-        Write-Host "[Auto Voucher] Mainland accelerator failed. Trying canonical GHCR because -AllowOverseasFallback was provided." -ForegroundColor Yellow
-        Invoke-Docker -Arguments @("pull", $SelectedImage)
-    }
+    $SelectedImage = Pull-AutoVoucherImage -SelectedImage $SelectedImage
 
     $ExistingContainerId = (& $script:DockerCommand ps --all --quiet --filter "name=^/$ContainerName$")
     if ($LASTEXITCODE -ne 0) {

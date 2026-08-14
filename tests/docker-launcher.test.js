@@ -55,6 +55,9 @@ test("Windows installer only pulls the prebuilt image and preserves Docker data 
   assert.match(installer, /files\.m\.daocloud\.io\/desktop\.docker\.com/);
   assert.match(installer, /Get-AuthenticodeSignature/);
   assert.match(installer, /Signature\.Status -ne "Valid"/);
+  assert.match(installer, /function Confirm-DockerDesktopLicense/);
+  assert.match(installer, /Read-Host "Type YES to accept and continue"/);
+  assert.match(installer, /https:\/\/www\.docker\.com\/legal\/docker-subscription-service-agreement\//);
   assert.match(installer, /function Ensure-WslReady/);
   assert.match(installer, /--install/);
   assert.match(installer, /--no-distribution/);
@@ -66,6 +69,8 @@ test("Windows installer only pulls the prebuilt image and preserves Docker data 
   assert.match(installer, /"--accept-license"/);
   assert.match(installer, /"--backend=wsl-2"/);
   assert.match(installer, /Invoke-Docker -Arguments @\("pull", \$SelectedImage\)/);
+  assert.match(installer, /Mainland accelerator failed\. Trying canonical GHCR automatically/);
+  assert.doesNotMatch(installer, /-not \$AllowOverseasFallback/);
   assert.match(installer, /"run", "--detach"/);
   assert.match(installer, /"--security-opt", "no-new-privileges"/);
   assert.match(installer, /"--cap-drop", "ALL"/);
@@ -110,6 +115,82 @@ test("Windows Docker probe treats a stopped daemon as a boolean failure", async 
   assert.match(result.stdout, /probe-result=false/);
 });
 
+test("Windows installer requires explicit Docker Desktop license consent", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("PowerShell installer execution is Windows-only");
+    return;
+  }
+
+  const installer = await readFile(installerPath, "utf8");
+  const start = installer.indexOf("function Confirm-DockerDesktopLicense {");
+  const end = installer.indexOf("\nfunction Install-DockerDesktop", start);
+  assert.ok(start >= 0 && end > start, "Confirm-DockerDesktopLicense function must remain extractable");
+  const consentFunction = installer.slice(start, end);
+  const probe = [
+    "$ErrorActionPreference = 'Stop'",
+    consentFunction,
+    "$script:AcceptDockerLicense = $false",
+    "function Read-Host { param([string]$Prompt) return 'YES' }",
+    "Confirm-DockerDesktopLicense",
+    "if (-not $script:AcceptDockerLicense) { throw 'YES did not record consent.' }",
+    "$script:AcceptDockerLicense = $false",
+    "function Read-Host { param([string]$Prompt) return 'NO' }",
+    "$declined = $false",
+    "try { Confirm-DockerDesktopLicense } catch { $declined = $true }",
+    "if (-not $declined) { throw 'A response other than YES must stop installation.' }",
+    "if ($script:AcceptDockerLicense) { throw 'Declined consent was recorded as accepted.' }",
+    "'license-consent=explicit'",
+  ].join("\n");
+
+  const { spawnSync } = await import("node:child_process");
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /license-consent=explicit/);
+});
+
+test("Windows installer automatically falls back from DaoCloud to canonical GHCR", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("PowerShell installer execution is Windows-only");
+    return;
+  }
+
+  const installer = await readFile(installerPath, "utf8");
+  const start = installer.indexOf("function Pull-AutoVoucherImage {");
+  const end = installer.indexOf("\nfunction Start-AutoVoucherContainer", start);
+  assert.ok(start >= 0 && end > start, "Pull-AutoVoucherImage function must remain extractable");
+  const pullFunction = installer.slice(start, end);
+  const probe = [
+    "$ErrorActionPreference = 'Stop'",
+    "$CanonicalImage = 'ghcr.io/honghudavy-star/auto-voucher:latest'",
+    "$script:PullAttempts = New-Object System.Collections.Generic.List[string]",
+    "function Invoke-Docker {",
+    "  param([Parameter(Mandatory = $true)][string[]]$Arguments)",
+    "  $script:PullAttempts.Add($Arguments[1])",
+    "  if ($script:PullAttempts.Count -eq 1) { throw 'simulated allowlist rejection' }",
+    "}",
+    pullFunction,
+    "$result = Pull-AutoVoucherImage -SelectedImage 'ghcr.m.daocloud.io/honghudavy-star/auto-voucher:latest'",
+    "if ($result -ne $CanonicalImage) { throw 'The canonical image was not selected.' }",
+    "if ($script:PullAttempts.Count -ne 2) { throw 'Expected exactly two pull attempts.' }",
+    "if ($script:PullAttempts[1] -ne $CanonicalImage) { throw 'The second pull did not use canonical GHCR.' }",
+    "$script:PullAttempts.Clear()",
+    "$customImageFailed = $false",
+    "try { Pull-AutoVoucherImage -SelectedImage 'registry.example.invalid/custom/image:latest' | Out-Null } catch { $customImageFailed = $true }",
+    "if (-not $customImageFailed) { throw 'A custom image failure must remain fail-closed.' }",
+    "if ($script:PullAttempts.Count -ne 1) { throw 'A custom image must not fall back to another registry.' }",
+    "'fallback-result=canonical-ghcr'",
+  ].join("\n");
+
+  const { spawnSync } = await import("node:child_process");
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", probe], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /fallback-result=canonical-ghcr/);
+});
+
 test("Windows Docker documentation separates Docker readiness from app installation", async () => {
   const [readme, guide] = await Promise.all([
     readFile(readmePath, "utf8"),
@@ -119,6 +200,7 @@ test("Windows Docker documentation separates Docker readiness from app installat
   assert.match(readme, /bfba1d9\/Install-Auto-Voucher-Docker\.ps1/);
   assert.match(readme, /-AcceptDockerLicense/);
   assert.match(readme, /-DockerOnly/);
+  assert.match(readme, /-AcceptDockerLicense -AllowOverseasFallback/);
   assert.match(readme, /第一步：一键安装 Docker Desktop 并验证 WSL 2/);
   assert.match(readme, /第二步：一键安装并启动 Auto Voucher/);
   assert.match(readme, /files\.m\.daocloud\.io/);
@@ -128,6 +210,7 @@ test("Windows Docker documentation separates Docker readiness from app installat
   assert.match(guide, /bfba1d9\/Install-Auto-Voucher-Docker\.ps1/);
   assert.match(guide, /-AcceptDockerLicense/);
   assert.match(guide, /-DockerOnly/);
+  assert.match(guide, /-AcceptDockerLicense -AllowOverseasFallback/);
   assert.match(guide, /第一步：一键安装 Docker Desktop 并验证 WSL 2/);
   assert.match(guide, /第二步：一键安装并启动 Auto Voucher/);
   assert.match(guide, /ghcr\.m\.daocloud\.io\/honghudavy-star\/auto-voucher:latest/);
